@@ -15,10 +15,14 @@ export function useTwilioDevice(identityHint?: string) {
 
   const resolvedIdentity = useMemo(() => {
     if (identityHint?.trim()) return identityHint.trim();
-    return "agent";
+    return "";
   }, [identityHint]);
 
   useEffect(() => {
+    if (!resolvedIdentity) {
+      return;
+    }
+
     let isCancelled = false;
     let mountedDevice: Device | null = null;
 

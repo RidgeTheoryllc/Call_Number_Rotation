@@ -18,7 +18,8 @@ export default function LeadsPage() {
   const [callingLeadIds, setCallingLeadIds] = useState<Record<string, boolean>>({});
   const [isMuted, setIsMuted] = useState(false);
   const [callDurationSeconds, setCallDurationSeconds] = useState(0);
-  const { identity, deviceReady, callStatus, activeCall, deviceError, hangup, mute } = useTwilioDevice();
+  const [twilioIdentityHint, setTwilioIdentityHint] = useState("");
+  const { identity, deviceReady, callStatus, activeCall, deviceError, hangup, mute } = useTwilioDevice(twilioIdentityHint);
   const LEADS_PER_PAGE = 10;
   const supabase = getSupabaseBrowserClient();
 
@@ -72,6 +73,7 @@ export default function LeadsPage() {
       }
 
       setUserId(user.id);
+      setTwilioIdentityHint(`agent-${user.id}`);
     };
 
     void bootstrap();
