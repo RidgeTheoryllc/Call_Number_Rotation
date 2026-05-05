@@ -25,12 +25,18 @@ export function useTwilioDevice(identityHint?: string) {
     const initialize = async () => {
       try {
         setCallStatus("registering");
-        const tokenRes = await fetch(`/api/twilio/token?identity=${encodeURIComponent(resolvedIdentity)}`);
-        const tokenData = (await tokenRes.json()) as { token?: string; identity?: string; error?: string };
+        const fetchToken = async (): Promise<{ token: string; identity: string }> => {
+          const tokenRes = await fetch(`/api/twilio/token?identity=${encodeURIComponent(resolvedIdentity)}`);
+          const tokenData = (await tokenRes.json()) as { token?: string; identity?: string; error?: string };
 
-        if (!tokenRes.ok || !tokenData.token || !tokenData.identity) {
-          throw new Error(tokenData.error ?? "Failed to fetch Twilio token");
-        }
+          if (!tokenRes.ok || !tokenData.token || !tokenData.identity) {
+            throw new Error(tokenData.error ?? "Failed to fetch Twilio token");
+          }
+
+          return { token: tokenData.token, identity: tokenData.identity };
+        };
+
+        const tokenData = await fetchToken();
 
         if (isCancelled) return;
         setIdentity(tokenData.identity);
@@ -81,6 +87,16 @@ export function useTwilioDevice(identityHint?: string) {
           setDeviceError(error.message);
           setCallStatus("error");
           setDeviceReady(false);
+        });
+        mountedDevice.on("tokenWillExpire", async () => {
+          try {
+            const refreshed = await fetchToken();
+            await mountedDevice?.updateToken(refreshed.token);
+          } catch (error) {
+            if (isCancelled) return;
+            setDeviceError(error instanceof Error ? error.message : "Failed to refresh Twilio token");
+            setCallStatus("error");
+          }
         });
 
         if (isCancelled) return;

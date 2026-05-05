@@ -5,23 +5,27 @@ const { VoiceGrant } = AccessToken;
 
 export async function GET(req: NextRequest) {
   const accountSid = process.env.TWILIO_ACCOUNT_SID;
-  const authToken = process.env.TWILIO_AUTH_TOKEN;
   const apiKey = process.env.TWILIO_API_KEY;
   const apiSecret = process.env.TWILIO_API_SECRET;
   const twimlAppSid = process.env.TWILIO_TWIML_APP_SID;
 
-  if (!accountSid || !authToken || !apiKey || !apiSecret || !twimlAppSid) {
+  if (!accountSid || !apiKey || !apiSecret || !twimlAppSid) {
     return NextResponse.json(
       {
         error:
-          "Missing one or more Twilio env vars: TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_API_KEY, TWILIO_API_SECRET, TWILIO_TWIML_APP_SID",
+          "Missing one or more Twilio env vars: TWILIO_ACCOUNT_SID, TWILIO_API_KEY, TWILIO_API_SECRET, TWILIO_TWIML_APP_SID",
       },
       { status: 500 },
     );
   }
 
   const identity = req.nextUrl.searchParams.get("identity") ?? "agent";
-  const token = new AccessToken(accountSid, apiKey, apiSecret, { identity });
+  const token = new AccessToken(accountSid, apiKey, apiSecret, {
+    identity,
+    ttl: 3600,
+    // Allow for minor server/client time skew to avoid immediate 20104 errors.
+    nbf: Math.floor(Date.now() / 1000) - 10,
+  });
 
   token.addGrant(
     new VoiceGrant({
