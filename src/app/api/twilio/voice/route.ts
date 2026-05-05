@@ -25,11 +25,18 @@ export async function POST(req: NextRequest) {
     });
   }
 
+  const voiceActionUrl = new URL("/api/twilio/voice-status", req.nextUrl.origin);
+  voiceActionUrl.searchParams.set("to", to);
+  voiceActionUrl.searchParams.set("callerId", callerId);
+
   const response = new twilio.twiml.VoiceResponse();
   const dial = response.dial({
     callerId,
     timeout: 30,
     record: "record-from-ringing",
+    answerOnBridge: true,
+    action: voiceActionUrl.toString(),
+    method: "POST",
   });
 
   if (to.startsWith("client:")) {
