@@ -1,10 +1,11 @@
 "use client";
 
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useCallback, useEffect, useState } from "react";
 import Papa from "papaparse";
 import { AppShell } from "@/components/app-shell";
 import type { LeadRecord } from "@/types";
 import { useTwilioDevice } from "@/hooks/useTwilioDevice";
+import { getSupabaseBrowserClient } from "@/lib/supabase";
 
 export default function LeadsPage() {
   const [leads, setLeads] = useState<LeadRecord[]>([]);
@@ -12,12 +13,14 @@ export default function LeadsPage() {
   const [phone, setPhone] = useState("");
   const [error, setError] = useState("");
   const [isLoading, setIsLoading] = useState(true);
+  const [userId, setUserId] = useState<string | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
   const [callingLeadIds, setCallingLeadIds] = useState<Record<string, boolean>>({});
   const [isMuted, setIsMuted] = useState(false);
   const [callDurationSeconds, setCallDurationSeconds] = useState(0);
   const { identity, deviceReady, callStatus, activeCall, deviceError, hangup, mute } = useTwilioDevice();
   const LEADS_PER_PAGE = 10;
+  const supabase = getSupabaseBrowserClient();
 
   const formatDuration = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
@@ -38,30 +41,60 @@ export default function LeadsPage() {
     return () => window.clearInterval(timer);
   }, [callStatus]);
 
-  const load = async () => {
+  const load = useCallback(async () => {
+    if (!userId) {
+      setLeads([]);
+      setIsLoading(false);
+      return;
+    }
+
     setIsLoading(true);
     try {
-      const res = await fetch("/api/leads");
+      const res = await fetch(`/api/leads?user_id=${encodeURIComponent(userId)}`);
       const json = await res.json();
       if (res.ok) setLeads(json);
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [userId]);
+
+  useEffect(() => {
+    const bootstrap = async () => {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+
+      if (!user?.id) {
+        setError("You must be signed in to view leads.");
+        setLeads([]);
+        setIsLoading(false);
+        return;
+      }
+
+      setUserId(user.id);
+    };
+
+    void bootstrap();
+  }, [supabase]);
 
   useEffect(() => {
     const timer = setTimeout(() => {
       void load();
     }, 0);
     return () => clearTimeout(timer);
-  }, []);
+  }, [load]);
 
   const addLead = async (e: FormEvent) => {
     e.preventDefault();
+    if (!userId) {
+      setError("You must be signed in to add leads.");
+      return;
+    }
+
     await fetch("/api/leads", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name, phone }),
+      body: JSON.stringify({ name, phone, user_id: userId }),
     });
     setName("");
     setPhone("");
@@ -70,12 +103,17 @@ export default function LeadsPage() {
   };
 
   const onCsvUpload = async (file: File) => {
+    if (!userId) {
+      setError("You must be signed in to upload leads.");
+      return;
+    }
+
     const text = await file.text();
     const parsed = Papa.parse<{ name: string; phone: string }>(text, {
       header: true,
       skipEmptyLines: true,
     });
-    const valid = parsed.data.filter((row) => row.phone);
+    const valid = parsed.data.filter((row) => row.phone).map((row) => ({ ...row, user_id: userId }));
     await fetch("/api/leads", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -123,6 +161,7 @@ export default function LeadsPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           id: lead.id,
+          user_id: userId,
           status: "dialed",
           assigned_did: rotateData.did,
         }),
