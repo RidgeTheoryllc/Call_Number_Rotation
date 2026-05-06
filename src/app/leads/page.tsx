@@ -18,6 +18,10 @@ export default function LeadsPage() {
   const [callingLeadIds, setCallingLeadIds] = useState<Record<string, boolean>>({});
   const [deletingLeadIds, setDeletingLeadIds] = useState<Record<string, boolean>>({});
   const [leadPendingDelete, setLeadPendingDelete] = useState<LeadRecord | null>(null);
+  const [selectedLeadIds, setSelectedLeadIds] = useState<Record<string, boolean>>({});
+  const [bulkDeletePending, setBulkDeletePending] = useState(false);
+  const [isBulkDeleting, setIsBulkDeleting] = useState(false);
+  const [toast, setToast] = useState<{ tone: "success" | "warn"; message: string } | null>(null);
   const [isMuted, setIsMuted] = useState(false);
   const [callDurationSeconds, setCallDurationSeconds] = useState(0);
   const [twilioIdentityHint, setTwilioIdentityHint] = useState("");
@@ -33,6 +37,18 @@ export default function LeadsPage() {
     const secs = seconds % 60;
     return `${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
   };
+
+  const showToast = useCallback((tone: "success" | "warn", message: string) => {
+    setToast({ tone, message });
+  }, []);
+
+  useEffect(() => {
+    if (!toast) return;
+    const timeoutId = window.setTimeout(() => {
+      setToast(null);
+    }, 3500);
+    return () => window.clearTimeout(timeoutId);
+  }, [toast]);
 
   const totalPages = Math.max(1, Math.ceil(leads.length / LEADS_PER_PAGE));
   const safeCurrentPage = Math.min(currentPage, totalPages);
@@ -86,11 +102,27 @@ export default function LeadsPage() {
   const addLead = async (e: FormEvent) => {
     e.preventDefault();
     if (!userId) { setError("You must be signed in to add leads."); return; }
-    await fetch("/api/leads", {
+    const res = await fetch("/api/leads", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name, phone, user_id: userId }),
     });
+    const json = await res.json();
+    if (!res.ok) {
+      setError(json.error ?? "Failed to add lead.");
+      return;
+    }
+
+    const insertedCount = Number(json.inserted_count ?? 0);
+    const skippedDuplicates = Number(json.skipped_duplicates ?? 0);
+    if (insertedCount > 0 && skippedDuplicates > 0) {
+      showToast("warn", `Added ${insertedCount} lead. Skipped ${skippedDuplicates} duplicate number.`);
+    } else if (insertedCount > 0) {
+      showToast("success", `Lead added successfully.`);
+    } else {
+      showToast("warn", `Lead not added because the number already exists.`);
+    }
+
     setName("");
     setPhone("");
     load();
@@ -100,13 +132,58 @@ export default function LeadsPage() {
   const onCsvUpload = async (file: File) => {
     if (!userId) { setError("You must be signed in to upload leads."); return; }
     const text = await file.text();
-    const parsed = Papa.parse<{ name: string; phone: string }>(text, { header: true, skipEmptyLines: true });
-    const valid = parsed.data.filter((row) => row.phone).map((row) => ({ ...row, user_id: userId }));
-    await fetch("/api/leads", {
+    const parsed = Papa.parse<Record<string, string>>(text, { header: true, skipEmptyLines: true });
+
+    const pickField = (row: Record<string, string>, candidates: string[]) => {
+      const normalizedEntries = Object.entries(row).map(([key, value]) => [
+        key.trim().toLowerCase().replace(/[_\s-]+/g, ""),
+        value,
+      ] as const);
+      for (const candidate of candidates) {
+        const normalizedCandidate = candidate.trim().toLowerCase().replace(/[_\s-]+/g, "");
+        const matched = normalizedEntries.find(([normalizedKey]) => normalizedKey === normalizedCandidate);
+        if (matched?.[1]) return String(matched[1]).trim();
+      }
+      return "";
+    };
+
+    const valid = parsed.data
+      .map((row) => {
+        const phoneValue = pickField(row, ["phone", "phonenumber", "phone_number", "mobile", "telephone", "tel"]);
+        const nameValue = pickField(row, ["name", "fullname", "full_name", "firstname", "first_name"]);
+        if (!phoneValue) return null;
+        return {
+          name: nameValue || "Unknown",
+          phone: phoneValue,
+          user_id: userId,
+        };
+      })
+      .filter((row): row is { name: string; phone: string; user_id: string } => row !== null);
+
+    if (valid.length === 0) {
+      setError("No valid rows found. Make sure your CSV has a phone column (e.g., Phone, Phone number, mobile).");
+      return;
+    }
+
+    const res = await fetch("/api/leads", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(valid),
     });
+    const json = await res.json();
+    if (!res.ok) {
+      setError(json.error ?? "Failed to import CSV leads.");
+      return;
+    }
+
+    const insertedCount = Number(json.inserted_count ?? 0);
+    const skippedDuplicates = Number(json.skipped_duplicates ?? 0);
+    if (skippedDuplicates > 0) {
+      showToast("warn", `Imported ${insertedCount} lead(s). Skipped ${skippedDuplicates} duplicate number(s).`);
+    } else {
+      showToast("success", `Imported ${insertedCount} lead(s) successfully.`);
+    }
+
     load();
     setCurrentPage(1);
   };
@@ -169,6 +246,56 @@ export default function LeadsPage() {
     setLeadPendingDelete(null);
   }, [deleteLead, leadPendingDelete]);
 
+  const selectedCount = Object.values(selectedLeadIds).filter(Boolean).length;
+  const selectedOnPageCount = paginatedLeads.filter((lead) => selectedLeadIds[lead.id]).length;
+  const allOnPageSelected = paginatedLeads.length > 0 && selectedOnPageCount === paginatedLeads.length;
+
+  const toggleLeadSelected = (leadId: string) => {
+    setSelectedLeadIds((prev) => ({ ...prev, [leadId]: !prev[leadId] }));
+  };
+
+  const toggleSelectPage = () => {
+    setSelectedLeadIds((prev) => {
+      const next = { ...prev };
+      if (allOnPageSelected) {
+        paginatedLeads.forEach((lead) => {
+          delete next[lead.id];
+        });
+      } else {
+        paginatedLeads.forEach((lead) => {
+          next[lead.id] = true;
+        });
+      }
+      return next;
+    });
+  };
+
+  const deleteSelectedLeads = useCallback(async () => {
+    if (!userId || selectedCount === 0 || isBulkDeleting) return;
+    setIsBulkDeleting(true);
+    setError("");
+    try {
+      const ids = Object.entries(selectedLeadIds)
+        .filter(([, selected]) => selected)
+        .map(([id]) => id);
+      const res = await fetch("/api/leads", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ids, user_id: userId }),
+      });
+      const json = await res.json();
+      if (!res.ok) {
+        setError(json.error ?? "Failed to delete selected leads.");
+        return;
+      }
+      setSelectedLeadIds({});
+      await load();
+    } finally {
+      setIsBulkDeleting(false);
+      setBulkDeletePending(false);
+    }
+  }, [isBulkDeleting, load, selectedCount, selectedLeadIds, userId]);
+
   useEffect(() => {
     if (!autoDialEnabled) return;
     if (!userId || !identity || !deviceReady) return;
@@ -196,9 +323,20 @@ export default function LeadsPage() {
             <h1 className="text-2xl font-semibold tracking-tight text-slate-900">Leads</h1>
             <p className="mt-0.5 text-sm text-slate-500">Import, route, and execute calls against pending leads.</p>
           </div>
-          <span className="text-sm font-medium text-slate-500">
-            {leads.length} total lead{leads.length !== 1 ? "s" : ""}
-          </span>
+          <div className="flex items-center gap-3">
+            {selectedCount > 0 ? (
+              <button
+                type="button"
+                onClick={() => setBulkDeletePending(true)}
+                className="inline-flex h-8 items-center gap-1.5 rounded-md bg-rose-600 px-3 text-xs font-semibold text-white transition hover:bg-rose-700"
+              >
+                Delete selected ({selectedCount})
+              </button>
+            ) : null}
+            <span className="text-sm font-medium text-slate-500">
+              {leads.length} total lead{leads.length !== 1 ? "s" : ""}
+            </span>
+          </div>
         </div>
 
         {/* Device Status Bar */}
@@ -347,6 +485,15 @@ export default function LeadsPage() {
           <table className="min-w-full text-sm">
             <thead>
               <tr className="border-b border-slate-200 bg-slate-50">
+                <th className="w-10 px-2 py-2.5 text-left">
+                  <input
+                    type="checkbox"
+                    checked={allOnPageSelected}
+                    onChange={toggleSelectPage}
+                    aria-label="Select all leads on page"
+                    className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                  />
+                </th>
                 {["Name", "Phone", "Area Code", "Status", "Assigned DID", "Result", "Actions"].map((col) => (
                   <th
                     key={col}
@@ -360,7 +507,7 @@ export default function LeadsPage() {
             <tbody className="divide-y divide-slate-100">
               {isLoading && (
                 <tr>
-                  <td colSpan={7} className="px-4 py-10 text-center text-sm text-slate-400">
+                  <td colSpan={8} className="px-4 py-10 text-center text-sm text-slate-400">
                     <span className="inline-flex items-center gap-2">
                       <span className="h-4 w-4 animate-spin rounded-full border-2 border-slate-300 border-t-slate-600" />
                       Loading leads…
@@ -370,13 +517,22 @@ export default function LeadsPage() {
               )}
               {!isLoading && leads.length === 0 && (
                 <tr>
-                  <td colSpan={7} className="px-4 py-12 text-center text-sm text-slate-400">
+                  <td colSpan={8} className="px-4 py-12 text-center text-sm text-slate-400">
                     No leads yet. Add a lead above or upload a CSV to get started.
                   </td>
                 </tr>
               )}
               {paginatedLeads.map((lead) => (
                 <tr key={lead.id} className="transition hover:bg-slate-50/70">
+                  <td className="px-2 py-3">
+                    <input
+                      type="checkbox"
+                      checked={Boolean(selectedLeadIds[lead.id])}
+                      onChange={() => toggleLeadSelected(lead.id)}
+                      aria-label={`Select ${lead.name}`}
+                      className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                    />
+                  </td>
                   <td className="px-4 py-3 font-medium text-slate-900">{lead.name}</td>
                   <td className="px-4 py-3 tabular-nums text-slate-600">{lead.phone}</td>
                   <td className="px-4 py-3 text-slate-600">{lead.area_code}</td>
@@ -464,31 +620,48 @@ export default function LeadsPage() {
       </section>
 
       {/* Delete Confirmation Modal */}
-      {leadPendingDelete && (
+      {leadPendingDelete || bulkDeletePending ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 px-4 backdrop-blur-sm">
           <div className="w-full max-w-sm rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl">
             <div className="mb-4 flex h-10 w-10 items-center justify-center rounded-full bg-rose-100">
               <svg className="h-5 w-5 text-rose-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/></svg>
             </div>
-            <h2 className="text-base font-semibold text-slate-900">Delete this lead?</h2>
+            <h2 className="text-base font-semibold text-slate-900">
+              {leadPendingDelete ? "Delete this lead?" : `Delete ${selectedCount} selected leads?`}
+            </h2>
             <p className="mt-1.5 text-sm text-slate-500">
-              <span className="font-medium text-slate-800">{leadPendingDelete.name}</span> will be permanently removed from your leads list.
+              {leadPendingDelete ? (
+                <>
+                  <span className="font-medium text-slate-800">{leadPendingDelete.name}</span> will be permanently removed from your leads list.
+                </>
+              ) : (
+                <>This will permanently remove all selected leads from your leads list.</>
+              )}
             </p>
             <div className="mt-5 flex items-center justify-end gap-2">
               <button
                 type="button"
-                onClick={() => setLeadPendingDelete(null)}
+                onClick={() => {
+                  setLeadPendingDelete(null);
+                  setBulkDeletePending(false);
+                }}
                 className="h-9 rounded-md border border-slate-300 bg-white px-4 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
               >
                 Cancel
               </button>
               <button
                 type="button"
-                onClick={() => void confirmDeleteLead()}
-                disabled={Boolean(deletingLeadIds[leadPendingDelete.id])}
+                onClick={() => {
+                  if (leadPendingDelete) {
+                    void confirmDeleteLead();
+                    return;
+                  }
+                  void deleteSelectedLeads();
+                }}
+                disabled={leadPendingDelete ? Boolean(deletingLeadIds[leadPendingDelete.id]) : isBulkDeleting}
                 className="inline-flex h-9 items-center gap-1.5 rounded-md bg-rose-600 px-4 text-sm font-semibold text-white transition hover:bg-rose-700 disabled:cursor-not-allowed disabled:opacity-60"
               >
-                {deletingLeadIds[leadPendingDelete.id] && (
+                {(leadPendingDelete ? Boolean(deletingLeadIds[leadPendingDelete.id]) : isBulkDeleting) && (
                   <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-rose-300 border-t-white" />
                 )}
                 Delete
@@ -496,7 +669,21 @@ export default function LeadsPage() {
             </div>
           </div>
         </div>
-      )}
+      ) : null}
+
+      {toast ? (
+        <div className="pointer-events-none fixed right-5 top-5 z-70">
+          <div
+            className={`max-w-md rounded-lg border px-4 py-2.5 text-sm font-medium shadow-lg ${
+              toast.tone === "success"
+                ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                : "border-amber-200 bg-amber-50 text-amber-800"
+            }`}
+          >
+            {toast.message}
+          </div>
+        </div>
+      ) : null}
     </AppShell>
   );
 }
