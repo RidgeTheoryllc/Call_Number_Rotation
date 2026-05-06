@@ -43,6 +43,7 @@ export function useTwilioDevice(identityHint?: string) {
         const tokenData = await fetchToken();
 
         if (isCancelled) return;
+        setDeviceError("");
         setIdentity(tokenData.identity);
 
         mountedDevice = new Device(tokenData.token, {
@@ -98,21 +99,6 @@ export function useTwilioDevice(identityHint?: string) {
           setCallStatus("error");
           setDeviceReady(false);
         });
-        mountedDevice.on("connect", (connectedCall) => {
-          if (isCancelled) return;
-          setActiveCall(connectedCall);
-          setCallStatus("in-progress");
-        });
-        mountedDevice.on("disconnect", () => {
-          if (isCancelled) return;
-          setActiveCall(null);
-          setCallStatus("completed");
-        });
-        mountedDevice.on("cancel", () => {
-          if (isCancelled) return;
-          setActiveCall(null);
-          setCallStatus("completed");
-        });
         mountedDevice.on("tokenWillExpire", async () => {
           try {
             const refreshed = await fetchToken();
@@ -154,8 +140,6 @@ export function useTwilioDevice(identityHint?: string) {
     } else {
       device?.disconnectAll();
     }
-    setActiveCall(null);
-    setCallStatus("completed");
   };
 
   const mute = (muted: boolean) => {

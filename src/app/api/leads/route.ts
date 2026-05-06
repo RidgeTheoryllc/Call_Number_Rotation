@@ -95,3 +95,26 @@ export async function PATCH(req: NextRequest) {
     );
   }
 }
+
+export async function DELETE(req: NextRequest) {
+  try {
+    const body = await req.json();
+    const id = body?.id as string | undefined;
+    const userId = body?.user_id as string | undefined;
+
+    if (!id || !userId) {
+      return NextResponse.json({ error: "Lead id and user_id are required" }, { status: 400 });
+    }
+
+    const supabase = getSupabaseServerClient();
+    const { error } = await supabase.from("leads").delete().eq("id", id).eq("user_id", userId);
+    if (error) throw error;
+
+    return NextResponse.json({ success: true });
+  } catch (error) {
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : "Unexpected error" },
+      { status: 500 },
+    );
+  }
+}

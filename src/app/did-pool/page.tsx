@@ -14,6 +14,8 @@ export default function DidPoolPage() {
   const [error, setError] = useState("");
   const [isLoading, setIsLoading] = useState(true);
   const [userId, setUserId] = useState<string | null>(null);
+  const [deletingDidIds, setDeletingDidIds] = useState<Record<string, boolean>>({});
+  const [didPendingDelete, setDidPendingDelete] = useState<DidRecord | null>(null);
   const supabase = getSupabaseBrowserClient();
 
   const load = useCallback(async () => {
@@ -104,23 +106,26 @@ export default function DidPoolPage() {
       setError("You must be signed in to delete DIDs.");
       return;
     }
+    if (deletingDidIds[id]) return;
+    setDeletingDidIds((prev) => ({ ...prev, [id]: true }));
 
-    const confirmDelete = window.confirm("Delete this DID number? This action cannot be undone.");
-    if (!confirmDelete) return;
+    try {
+      const res = await fetch("/api/did-pool", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id, user_id: userId }),
+      });
 
-    const res = await fetch("/api/did-pool", {
-      method: "DELETE",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id, user_id: userId }),
-    });
+      const json = await res.json();
+      if (!res.ok) {
+        setError(json.error ?? "Failed to delete DID");
+        return;
+      }
 
-    const json = await res.json();
-    if (!res.ok) {
-      setError(json.error ?? "Failed to delete DID");
-      return;
+      await load();
+    } finally {
+      setDeletingDidIds((prev) => ({ ...prev, [id]: false }));
     }
-
-    await load();
   };
 
   const rows = useMemo(
@@ -135,7 +140,7 @@ export default function DidPoolPage() {
 
   return (
     <AppShell>
-      <section className="space-y-6">
+      <section className="mx-auto max-w-7xl space-y-5 px-4 py-6 sm:px-6">
         <div>
           <h1 className="text-3xl font-semibold tracking-tight text-slate-900">DID Pool Management</h1>
           <p className="mt-1 text-sm text-slate-500">Per-number rotation health and suppression controls.</p>
@@ -164,40 +169,41 @@ export default function DidPoolPage() {
         </form>
         {error ? <p className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm font-medium text-rose-700">{error}</p> : null}
 
-        <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-sm">
+        <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+          <div className="overflow-x-auto">
           <table className="min-w-full text-sm">
-            <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500">
-              <tr>
-                <th className="px-3 py-2">Phone</th>
-                <th className="px-3 py-2">Area</th>
-                <th className="px-3 py-2">Status</th>
-                <th className="px-3 py-2">Calls Today</th>
-                <th className="px-3 py-2">Total Calls</th>
-                <th className="px-3 py-2">Answer Rate</th>
-                <th className="px-3 py-2">Spam Score</th>
-                <th className="px-3 py-2">Actions</th>
+            <thead>
+              <tr className="border-b border-slate-200 bg-slate-50">
+                <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">Phone</th>
+                <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">Area</th>
+                <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">Status</th>
+                <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">Calls Today</th>
+                <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">Total Calls</th>
+                <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">Answer Rate</th>
+                <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">Spam Score</th>
+                <th className="px-4 py-2.5 text-right text-xs font-semibold uppercase tracking-wider text-slate-500">Actions</th>
               </tr>
             </thead>
-            <tbody>
+            <tbody className="divide-y divide-slate-100">
               {rows.map((row) => (
                 <tr
                   key={row.id}
-                  className={`border-t border-slate-100 transition hover:bg-slate-50 ${row.badPerformer ? "bg-rose-50/60" : ""}`}
+                  className={`transition hover:bg-slate-50/70 ${row.badPerformer ? "bg-rose-50/60" : ""}`}
                 >
-                  <td className="px-3 py-2 font-medium text-slate-900">{row.did}</td>
-                  <td className="px-3 py-2 text-slate-700">{row.area_code || "-"}</td>
-                  <td className="px-3 py-2">
+                  <td className="px-4 py-3 font-medium text-slate-900">{row.did}</td>
+                  <td className="px-4 py-3 text-slate-700">{row.area_code || "-"}</td>
+                  <td className="px-4 py-3">
                     <Badge
                       value={row.status}
                       tone={row.status === "active" ? "good" : row.status === "cooldown" ? "warn" : "bad"}
                     />
                   </td>
-                  <td className="px-3 py-2 text-slate-700">
+                  <td className="px-4 py-3 text-slate-700">
                     <span className="font-semibold text-slate-900">{row.calls_today}</span>
                     <span className="text-slate-400"> / {row.dailyCap}</span>
                   </td>
-                  <td className="px-3 py-2 text-slate-700">{row.total_calls}</td>
-                  <td className="px-3 py-2">
+                  <td className="px-4 py-3 text-slate-700">{row.total_calls}</td>
+                  <td className="px-4 py-3">
                     <span
                       className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${
                         row.answer_rate >= 40 ? "bg-emerald-100 text-emerald-700" : row.answer_rate >= 20 ? "bg-amber-100 text-amber-700" : "bg-rose-100 text-rose-700"
@@ -206,7 +212,7 @@ export default function DidPoolPage() {
                       {row.answer_rate}%
                     </span>
                   </td>
-                  <td className="px-3 py-2">
+                  <td className="px-4 py-3">
                     <span
                       className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${
                         row.spam_score > 70 ? "bg-rose-100 text-rose-700" : row.spam_score > 40 ? "bg-amber-100 text-amber-700" : "bg-emerald-100 text-emerald-700"
@@ -215,8 +221,8 @@ export default function DidPoolPage() {
                       {row.spam_score}
                     </span>
                   </td>
-                  <td className="px-3 py-2">
-                    <div className="flex items-center gap-2">
+                  <td className="px-4 py-3">
+                    <div className="flex items-center justify-end gap-2">
                       {row.status === "active" ? (
                         <button
                           onClick={() => updateStatus(row.id, "cooldown")}
@@ -233,10 +239,34 @@ export default function DidPoolPage() {
                         </button>
                       )}
                       <button
-                        onClick={() => deleteDid(row.id)}
-                        className="rounded-md bg-rose-100 px-3 py-1.5 text-xs font-semibold text-rose-700 transition hover:bg-rose-200"
+                        type="button"
+                        onClick={() => setDidPendingDelete(row)}
+                        disabled={Boolean(deletingDidIds[row.id])}
+                        aria-label={`Delete ${row.did}`}
+                        title="Delete DID"
+                        className="inline-flex h-7 w-7 items-center justify-center rounded-md bg-rose-50 text-rose-600 ring-1 ring-rose-200 transition hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-50"
                       >
-                        Delete
+                        {deletingDidIds[row.id] ? (
+                          <span className="h-3 w-3 animate-spin rounded-full border-2 border-rose-300 border-t-rose-700" />
+                        ) : (
+                          <svg
+                            xmlns="http://www.w3.org/2000/svg"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="2"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            className="h-3.5 w-3.5"
+                            aria-hidden="true"
+                          >
+                            <path d="M3 6h18" />
+                            <path d="M8 6V4h8v2" />
+                            <path d="M19 6l-1 14H6L5 6" />
+                            <path d="M10 11v6" />
+                            <path d="M14 11v6" />
+                          </svg>
+                        )}
                       </button>
                     </div>
                   </td>
@@ -244,22 +274,71 @@ export default function DidPoolPage() {
               ))}
               {isLoading ? (
                 <tr>
-                  <td colSpan={8} className="px-3 py-8 text-center text-sm text-slate-500">
+                  <td colSpan={8} className="px-4 py-10 text-center text-sm text-slate-500">
                     Loading DID pool...
                   </td>
                 </tr>
               ) : null}
               {!isLoading && rows.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="px-3 py-8 text-center text-sm text-slate-500">
+                  <td colSpan={8} className="px-4 py-10 text-center text-sm text-slate-500">
                     No DIDs yet. Add a DID to begin rotation.
                   </td>
                 </tr>
               ) : null}
             </tbody>
           </table>
+          </div>
         </div>
       </section>
+
+      {didPendingDelete ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 px-4 backdrop-blur-sm">
+          <div className="w-full max-w-sm rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl">
+            <div className="mb-4 flex h-10 w-10 items-center justify-center rounded-full bg-rose-100">
+              <svg
+                className="h-5 w-5 text-rose-600"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+              >
+                <path d="M3 6h18" />
+                <path d="M8 6V4h8v2" />
+                <path d="M19 6l-1 14H6L5 6" />
+              </svg>
+            </div>
+            <h2 className="text-base font-semibold text-slate-900">Delete this DID?</h2>
+            <p className="mt-1.5 text-sm text-slate-500">
+              <span className="font-medium text-slate-800">{didPendingDelete.did}</span> will be permanently removed from your DID pool.
+            </p>
+            <div className="mt-5 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setDidPendingDelete(null)}
+                className="h-9 rounded-md border border-slate-300 bg-white px-4 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  void deleteDid(didPendingDelete.id).then(() => {
+                    setDidPendingDelete(null);
+                  });
+                }}
+                disabled={Boolean(deletingDidIds[didPendingDelete.id])}
+                className="inline-flex h-9 items-center gap-1.5 rounded-md bg-rose-600 px-4 text-sm font-semibold text-white transition hover:bg-rose-700 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {deletingDidIds[didPendingDelete.id] ? (
+                  <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-rose-300 border-t-white" />
+                ) : null}
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </AppShell>
   );
 }
