@@ -37,3 +37,33 @@ export async function GET(req: NextRequest) {
     );
   }
 }
+
+export async function PATCH(req: NextRequest) {
+  try {
+    const body = await req.json();
+    const id = body?.id as string | undefined;
+    const userId = body?.user_id as string | undefined;
+    const callNotes = body?.call_notes as string | undefined;
+
+    if (!id || !userId) {
+      return NextResponse.json({ error: "Call log id and user_id are required" }, { status: 400 });
+    }
+
+    const supabase = getSupabaseServerClient();
+    const { data, error } = await supabase
+      .from("call_logs")
+      .update({ call_notes: callNotes ?? "" })
+      .eq("id", id)
+      .eq("user_id", userId)
+      .select()
+      .single();
+    if (error) throw error;
+
+    return NextResponse.json(data);
+  } catch (error) {
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : "Unexpected error" },
+      { status: 500 },
+    );
+  }
+}

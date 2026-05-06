@@ -39,6 +39,7 @@ export interface CallLogRecord {
   result: CallResult;
   duration: number | null;
   timestamp: string;
+  call_notes?: string | null;
   created_at?: string;
 }
 
