@@ -12,9 +12,10 @@ export function getDidWarmupCap(did: DidRecord): number {
   }
 
   let cap = 50;
-  if (ageDays <= 1) cap = 10;
-  else if (ageDays === 2) cap = 20;
-  else if (ageDays === 3) cap = 35;
+  if (ageDays <= 1) cap = 50;
+  else if (ageDays === 2) cap = 70;
+  else if (ageDays === 3) cap = 85;
+  else cap = 100;
 
   // Performance-based dynamic adjustment on top of age cap.
   if (did.answer_rate >= 25 && did.spam_score < 20) {
@@ -24,7 +25,7 @@ export function getDidWarmupCap(did: DidRecord): number {
     cap = Math.min(cap, 10);
   }
 
-  return Math.max(5, Math.min(50, cap));
+  return Math.max(5, Math.min(100, cap));
 }
 
 export function scoreDid(did: DidRecord, leadAreaCode: string): number {
