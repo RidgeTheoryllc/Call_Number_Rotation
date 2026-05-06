@@ -20,6 +20,7 @@ export default function LeadsPage() {
   const [callDurationSeconds, setCallDurationSeconds] = useState(0);
   const [twilioIdentityHint, setTwilioIdentityHint] = useState("");
   const { identity, deviceReady, callStatus, activeCall, deviceError, hangup, mute } = useTwilioDevice(twilioIdentityHint);
+  const showCallControls = callStatus === "ringing" || callStatus === "in-progress";
   const LEADS_PER_PAGE = 10;
   const supabase = getSupabaseBrowserClient();
 
@@ -204,7 +205,7 @@ export default function LeadsPage() {
             ) : null}
           </div>
           {deviceError ? <p className="mt-3 text-sm font-medium text-rose-600">{deviceError}</p> : null}
-          {activeCall ? (
+          {showCallControls ? (
             <div className="mt-3 flex items-center gap-2">
               <button
                 onClick={() => {
@@ -212,6 +213,7 @@ export default function LeadsPage() {
                   mute(nextMuted);
                   setIsMuted(nextMuted);
                 }}
+                disabled={!activeCall}
                 className="rounded-md bg-amber-100 px-3 py-1.5 text-xs font-semibold text-amber-800 transition hover:bg-amber-200"
               >
                 {isMuted ? "Unmute" : "Mute"}

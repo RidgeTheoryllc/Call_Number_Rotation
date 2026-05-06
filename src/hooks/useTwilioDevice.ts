@@ -79,6 +79,12 @@ export function useTwilioDevice(identityHint?: string) {
             setCallStatus("completed");
           });
 
+          incomingCall.on("reject", () => {
+            if (isCancelled) return;
+            setActiveCall(null);
+            setCallStatus("completed");
+          });
+
           incomingCall.on("error", (error: Error) => {
             if (isCancelled) return;
             setDeviceError(error.message);
@@ -91,6 +97,21 @@ export function useTwilioDevice(identityHint?: string) {
           setDeviceError(error.message);
           setCallStatus("error");
           setDeviceReady(false);
+        });
+        mountedDevice.on("connect", (connectedCall) => {
+          if (isCancelled) return;
+          setActiveCall(connectedCall);
+          setCallStatus("in-progress");
+        });
+        mountedDevice.on("disconnect", () => {
+          if (isCancelled) return;
+          setActiveCall(null);
+          setCallStatus("completed");
+        });
+        mountedDevice.on("cancel", () => {
+          if (isCancelled) return;
+          setActiveCall(null);
+          setCallStatus("completed");
         });
         mountedDevice.on("tokenWillExpire", async () => {
           try {
@@ -128,8 +149,11 @@ export function useTwilioDevice(identityHint?: string) {
   }, [resolvedIdentity]);
 
   const hangup = () => {
-    if (!activeCall) return;
-    activeCall.disconnect();
+    if (activeCall) {
+      activeCall.disconnect();
+    } else {
+      device?.disconnectAll();
+    }
     setActiveCall(null);
     setCallStatus("completed");
   };
