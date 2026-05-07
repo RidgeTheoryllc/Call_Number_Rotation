@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import twilio from "twilio";
+import { normalizePhone } from "@/lib/utils";
 
 function getCallerId(fallbackCallerId: string, callerIdFromBody: string | null) {
   const callerId = callerIdFromBody?.trim();
@@ -10,10 +11,27 @@ export async function POST(req: NextRequest) {
   const body = await req.formData();
   const toFromQuery = req.nextUrl.searchParams.get("to");
   const callerIdFromQuery = req.nextUrl.searchParams.get("callerId");
-  const to = toFromQuery ?? body.get("To")?.toString() ?? "";
+  const bodyTo = body.get("To")?.toString() ?? "";
+  const to = toFromQuery ?? bodyTo;
   const callerIdFromBody = callerIdFromQuery ?? body.get("CallerId")?.toString() ?? null;
   const from = body.get("From")?.toString() ?? null;
   const defaultCallerId = process.env.TWILIO_DEFAULT_CALLER_ID ?? "";
+  const calledVia = body.get("CalledVia")?.toString() ?? "";
+  const isInboundPstn = !toFromQuery && !callerIdFromQuery && calledVia.toLowerCase() === "pstn";
+
+  if (isInboundPstn) {
+    const leadPhone = normalizePhone(from ?? "");
+    const did = normalizePhone(bodyTo);
+    const inboundUrl = new URL("/api/twilio/inbound", req.nextUrl.origin);
+    inboundUrl.searchParams.set("leadPhone", leadPhone);
+    inboundUrl.searchParams.set("did", did);
+
+    const response = new twilio.twiml.VoiceResponse();
+    response.redirect({ method: "POST" }, inboundUrl.toString());
+    return new NextResponse(response.toString(), {
+      headers: { "Content-Type": "text/xml" },
+    });
+  }
 
   const callerId = getCallerId(defaultCallerId, callerIdFromBody ?? from);
   if (!to || !callerId) {
