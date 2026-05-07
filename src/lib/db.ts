@@ -1,6 +1,13 @@
 import { getSupabaseServerClient } from "./supabase";
 import { extractAreaCode, normalizePhone, toFixedNum } from "./utils";
-import { getClosestAreaCodeMatch, getDidWarmupCap, scoreDid, updateDidScoreAfterCall } from "./did-engine";
+import {
+  getAppDateKey,
+  getClosestAreaCodeMatch,
+  getDidCallsToday,
+  getDidWarmupCap,
+  scoreDid,
+  updateDidScoreAfterCall,
+} from "./did-engine";
 import type { CallLogRecord, CallResult, DidRecord, LeadRecord } from "@/types";
 
 export async function listDidPool(userId?: string) {
@@ -31,7 +38,7 @@ export async function selectBestDid(leadPhone: string, userId?: string) {
   const dids = await listDidPool(userId);
 
   const activeDids = dids.filter(
-    (did) => did.status === "active" && did.calls_today < getDidWarmupCap(did) && did.spam_score < 80,
+    (did) => did.status === "active" && getDidCallsToday(did) < getDidWarmupCap(did) && did.spam_score < 80,
   );
 
   if (!activeDids.length) {
@@ -93,13 +100,14 @@ export async function updateDidAfterCall(didNumber: string, callResult: CallResu
   const totalCallCount = (totalCallsRes.data ?? []).filter((log) => normalizePhone(log.did) === normalizePhone(did.did)).length;
   const answeredCallCount = (answeredCallsRes.data ?? []).filter((log) => normalizePhone(log.did) === normalizePhone(did.did)).length;
   const answerRate = totalCallCount > 0 ? toFixedNum((answeredCallCount / totalCallCount) * 100) : 0;
+  const callsToday = getDidCallsToday(did);
 
   const { error: updateError } = await supabase
     .from("did_pool")
     .update({
       ...nextScore,
       answer_rate: answerRate,
-      calls_today: (did.calls_today ?? 0) + 1,
+      calls_today: callsToday + 1,
       total_calls: totalCallCount,
       last_used: new Date().toISOString(),
     })
@@ -119,8 +127,8 @@ export async function getDashboardAnalytics(userId: string) {
 
   const dids = (didsData ?? []) as DidRecord[];
   const logs = (logsData ?? []) as CallLogRecord[];
-  const today = new Date().toISOString().slice(0, 10);
-  const todayLogs = logs.filter((log) => log.timestamp.slice(0, 10) === today);
+  const today = getAppDateKey(new Date());
+  const todayLogs = logs.filter((log) => today && getAppDateKey(log.timestamp) === today);
 
   const answeredToday = todayLogs.filter((log) => log.result === "answered").length;
   const answerRate = todayLogs.length ? (answeredToday / todayLogs.length) * 100 : 0;

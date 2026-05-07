@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase";
+import { getDidCallsToday } from "@/lib/did-engine";
 import { extractAreaCode } from "@/lib/utils";
 import { normalizePhone, toFixedNum } from "@/lib/utils";
 
@@ -39,6 +40,7 @@ export async function GET(req: NextRequest) {
       const answerRate = didStats.total > 0 ? toFixedNum((didStats.answered / didStats.total) * 100) : 0;
       return {
         ...row,
+        calls_today: getDidCallsToday(row),
         answer_rate: answerRate,
         total_calls: didStats.total || row.total_calls || 0,
       };

@@ -7,6 +7,23 @@ import type { LeadRecord } from "@/types";
 import { useTwilioDevice } from "@/hooks/useTwilioDevice";
 import { getSupabaseBrowserClient } from "@/lib/supabase";
 
+function sortLeadsByPriority(rows: LeadRecord[]): LeadRecord[] {
+  const statusRank: Record<LeadRecord["status"], number> = {
+    pending: 0,
+    dialed: 1,
+    completed: 2,
+  };
+
+  return [...rows].sort((a, b) => {
+    const rankDiff = statusRank[a.status] - statusRank[b.status];
+    if (rankDiff !== 0) return rankDiff;
+
+    const aCreated = a.created_at ? new Date(a.created_at).getTime() : 0;
+    const bCreated = b.created_at ? new Date(b.created_at).getTime() : 0;
+    return bCreated - aCreated;
+  });
+}
+
 export default function LeadsPage() {
   const [leads, setLeads] = useState<LeadRecord[]>([]);
   const [name, setName] = useState("");
@@ -74,7 +91,7 @@ export default function LeadsPage() {
     try {
       const res = await fetch(`/api/leads?user_id=${encodeURIComponent(userId)}`);
       const json = await res.json();
-      if (res.ok) setLeads(json);
+      if (res.ok) setLeads(sortLeadsByPriority(json as LeadRecord[]));
     } finally {
       setIsLoading(false);
     }
