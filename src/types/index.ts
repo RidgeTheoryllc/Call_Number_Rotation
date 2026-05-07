@@ -6,6 +6,7 @@ export type CallResult =
   | "busy"
   | "failed"
   | "spam_flagged";
+export type CallDirection = "inbound" | "outbound";
 
 export interface DidRecord {
   id: string;
@@ -36,6 +37,7 @@ export interface CallLogRecord {
   phone: string;
   did: string;
   lead_name?: string | null;
+  direction?: CallDirection;
   result: CallResult;
   duration: number | null;
   timestamp: string;

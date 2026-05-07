@@ -27,6 +27,11 @@ export default function CallLogsPage() {
     return "bg-slate-100 text-slate-700";
   };
 
+  const getDirectionTone = (direction?: CallLogRecord["direction"]) => {
+    if (direction === "inbound") return "bg-violet-100 text-violet-700";
+    return "bg-cyan-100 text-cyan-700";
+  };
+
   useEffect(() => {
     const load = async () => {
       const {
@@ -107,10 +112,11 @@ export default function CallLogsPage() {
     };
 
     const escapeCsv = (value: string) => `"${value.replace(/"/g, "\"\"")}"`;
-    const headers = ["Lead Name", "Phone", "Call Timestamp", "Notes"];
+    const headers = ["Lead Name", "Phone", "Direction", "Call Timestamp", "Notes"];
     const rows = logs.map((log) => [
       (log.lead_name ?? "").trim() || "Unknown",
       formatPhoneForCsv(log.phone ?? ""),
+      log.direction === "inbound" ? "Inbound" : "Outbound",
       new Date(log.timestamp).toLocaleString(undefined, {
         year: "numeric",
         month: "short",
@@ -164,6 +170,7 @@ export default function CallLogsPage() {
                 <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">Lead Name</th>
                 <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">Phone</th>
                 <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">DID Used</th>
+                <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">Direction</th>
                 <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">Result</th>
                 <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">Timestamp</th>
                 <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">Duration</th>
@@ -176,6 +183,11 @@ export default function CallLogsPage() {
                   <td className="px-4 py-3 font-medium text-slate-900">{log.lead_name ?? "-"}</td>
                   <td className="px-4 py-3 font-medium text-slate-900">{log.phone}</td>
                   <td className="px-4 py-3 text-slate-700">{log.did}</td>
+                  <td className="px-4 py-3">
+                    <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${getDirectionTone(log.direction)}`}>
+                      {log.direction === "inbound" ? "Inbound" : "Outbound"}
+                    </span>
+                  </td>
                   <td className="px-4 py-3">
                     <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${getResultTone(log.result)}`}>
                       {log.result.replace("_", " ")}
@@ -214,7 +226,7 @@ export default function CallLogsPage() {
               ))}
               {logs.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="px-4 py-10 text-center text-sm text-slate-500">
+                  <td colSpan={8} className="px-4 py-10 text-center text-sm text-slate-500">
                     No call logs yet. Completed calls will appear here.
                   </td>
                 </tr>

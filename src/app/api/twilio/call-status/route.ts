@@ -38,6 +38,7 @@ export async function POST(req: NextRequest) {
     const { error: logError } = await supabase.from("call_logs").insert({
       phone: normalizedTo,
       did: normalizedDid,
+      direction: "outbound",
       result,
       timestamp,
       duration: safeDuration,
