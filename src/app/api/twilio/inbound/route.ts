@@ -19,6 +19,8 @@ function resolvePublicBaseUrl(req: NextRequest): string {
 async function resolveUserIdFromDid(didNumber: string): Promise<string | null> {
   const supabase = getSupabaseServerClient();
   const normalizedDid = normalizePhone(didNumber);
+  const normalizedDigits = normalizedDid.replace(/\D/g, "");
+  const last10 = normalizedDigits.slice(-10);
 
   const { data: direct } = await supabase
     .from("did_pool")
@@ -29,7 +31,17 @@ async function resolveUserIdFromDid(didNumber: string): Promise<string | null> {
 
   const { data: rows, error } = await supabase.from("did_pool").select("did, user_id");
   if (error) return null;
-  const matched = (rows ?? []).find((row) => normalizePhone(String(row.did)) === normalizedDid);
+  const matched = (rows ?? []).find((row) => {
+    const rowNormalized = normalizePhone(String(row.did));
+    if (rowNormalized === normalizedDid) return true;
+
+    const rowDigits = rowNormalized.replace(/\D/g, "");
+    if (rowDigits === normalizedDigits) return true;
+
+    // Fallback for numbers stored without country code formatting.
+    if (last10.length === 10 && rowDigits.slice(-10) === last10) return true;
+    return false;
+  });
   return matched?.user_id ?? null;
 }
 
