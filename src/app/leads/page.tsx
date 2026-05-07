@@ -45,6 +45,7 @@ export default function LeadsPage() {
   const [twilioIdentityHint, setTwilioIdentityHint] = useState("");
   const [autoDialEnabled, setAutoDialEnabled] = useState(false);
   const autoDialLockRef = useRef(false);
+  const latestInboundLogIdRef = useRef<string | null>(null);
   const { identity, deviceReady, callStatus, activeCall, deviceError, hangup, mute } = useTwilioDevice(twilioIdentityHint);
   const showCallControls = callStatus === "ringing" || callStatus === "in-progress";
   const LEADS_PER_PAGE = 10;
@@ -97,6 +98,28 @@ export default function LeadsPage() {
     }
   }, [userId]);
 
+  const checkInboundCallbacks = useCallback(async () => {
+    if (!userId) return;
+
+    const res = await fetch(`/api/call-logs?user_id=${encodeURIComponent(userId)}`);
+    if (!res.ok) return;
+
+    const logs = (await res.json()) as Array<{ id: string; direction?: string; phone?: string; lead_name?: string | null }>;
+    const latestInbound = logs.find((log) => log.direction === "inbound");
+    if (!latestInbound?.id) return;
+
+    if (!latestInboundLogIdRef.current) {
+      latestInboundLogIdRef.current = latestInbound.id;
+      return;
+    }
+
+    if (latestInbound.id !== latestInboundLogIdRef.current) {
+      latestInboundLogIdRef.current = latestInbound.id;
+      const label = latestInbound.lead_name?.trim() || latestInbound.phone || "a lead";
+      showToast("success", `Incoming callback received from ${label}.`);
+    }
+  }, [showToast, userId]);
+
   useEffect(() => {
     const bootstrap = async () => {
       const { data: { user } } = await supabase.auth.getUser();
@@ -116,6 +139,20 @@ export default function LeadsPage() {
     const timer = setTimeout(() => { void load(); }, 0);
     return () => clearTimeout(timer);
   }, [load]);
+
+  useEffect(() => {
+    const initialTimer = window.setTimeout(() => {
+      void checkInboundCallbacks();
+    }, 0);
+    const intervalId = window.setInterval(() => {
+      void checkInboundCallbacks();
+    }, 10000);
+
+    return () => {
+      window.clearTimeout(initialTimer);
+      window.clearInterval(intervalId);
+    };
+  }, [checkInboundCallbacks]);
 
   const addLead = async (e: FormEvent) => {
     e.preventDefault();

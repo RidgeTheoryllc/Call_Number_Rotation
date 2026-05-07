@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { AppShell } from "@/components/app-shell";
 import { getSupabaseBrowserClient } from "@/lib/supabase";
 import type { CallLogRecord } from "@/types";
@@ -12,6 +12,42 @@ export default function CallLogsPage() {
   const [noteDrafts, setNoteDrafts] = useState<Record<string, string>>({});
   const [savingNoteIds, setSavingNoteIds] = useState<Record<string, boolean>>({});
   const supabase = useMemo(() => getSupabaseBrowserClient(), []);
+
+  const loadLogs = useCallback(
+    async (resolvedUserId?: string | null) => {
+      let activeUserId = resolvedUserId ?? userId;
+      if (!activeUserId) {
+        const {
+          data: { user },
+        } = await supabase.auth.getUser();
+        activeUserId = user?.id ?? null;
+      }
+
+      if (!activeUserId) {
+        setError("You must be signed in to view call logs.");
+        setLogs([]);
+        return;
+      }
+
+      setUserId(activeUserId);
+      const res = await fetch(`/api/call-logs?user_id=${encodeURIComponent(activeUserId)}`);
+      const json = await res.json();
+      if (res.ok) {
+        const nextLogs = json as CallLogRecord[];
+        setLogs(nextLogs);
+        setNoteDrafts((prev) => {
+          const merged = { ...prev };
+          nextLogs.forEach((log) => {
+            if (merged[log.id] == null) merged[log.id] = log.call_notes ?? "";
+          });
+          return merged;
+        });
+      } else {
+        setError(json.error ?? "Failed to load call logs.");
+      }
+    },
+    [supabase, userId],
+  );
 
   const formatDuration = (value: number | null) => {
     if (value == null) return "-";
@@ -33,33 +69,17 @@ export default function CallLogsPage() {
   };
 
   useEffect(() => {
-    const load = async () => {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-      if (!user?.id) {
-        setError("You must be signed in to view call logs.");
-        setLogs([]);
-        return;
-      }
-      setUserId(user.id);
-
-      const res = await fetch(`/api/call-logs?user_id=${encodeURIComponent(user.id)}`);
-      const json = await res.json();
-      if (res.ok) {
-        const nextLogs = json as CallLogRecord[];
-        setLogs(nextLogs);
-        const initialDrafts: Record<string, string> = {};
-        nextLogs.forEach((log) => {
-          initialDrafts[log.id] = log.call_notes ?? "";
-        });
-        setNoteDrafts(initialDrafts);
-      } else {
-        setError(json.error ?? "Failed to load call logs.");
-      }
+    const initialLoadTimer = window.setTimeout(() => {
+      void loadLogs();
+    }, 0);
+    const intervalId = window.setInterval(() => {
+      void loadLogs();
+    }, 10000);
+    return () => {
+      window.clearTimeout(initialLoadTimer);
+      window.clearInterval(intervalId);
     };
-    void load();
-  }, [supabase]);
+  }, [loadLogs]);
 
   const saveCallNote = async (log: CallLogRecord) => {
     if (savingNoteIds[log.id]) return;
@@ -150,7 +170,7 @@ export default function CallLogsPage() {
         <div className="flex items-center justify-between gap-3">
           <div>
           <h1 className="text-3xl font-semibold tracking-tight text-slate-900">Call Logs</h1>
-          <p className="mt-1 text-sm text-slate-500">Historical outbound call events and execution outcomes.</p>
+          <p className="mt-1 text-sm text-slate-500">Historical inbound and outbound call events.</p>
           </div>
           <button
             type="button"
