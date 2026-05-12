@@ -83,8 +83,19 @@ export default function LeadsPage() {
   const [autoDialEnabled, setAutoDialEnabled] = useState(false);
   const autoDialLockRef = useRef(false);
   const latestInboundLogIdRef = useRef<string | null>(null);
-  const { identity, deviceReady, callStatus, activeCall, deviceError, hangup, mute } = useTwilioDevice(twilioIdentityHint);
+  const {
+    identity,
+    deviceReady,
+    callStatus,
+    activeCall,
+    deviceError,
+    hangup,
+    answerIncomingCall,
+    rejectIncomingCall,
+    mute,
+  } = useTwilioDevice(twilioIdentityHint);
   const showCallControls = callStatus === "ringing" || callStatus === "in-progress";
+  const incomingCaller = callStatus === "ringing" ? activeCall?.parameters.From ?? activeCall?.parameters.Caller : null;
   const LEADS_PER_PAGE = 10;
   const supabase = getSupabaseBrowserClient();
 
@@ -142,6 +153,11 @@ export default function LeadsPage() {
     }, 1000);
     return () => window.clearInterval(timer);
   }, [callStatus]);
+
+  useEffect(() => {
+    if (callStatus !== "ringing" || !activeLeadCall) return;
+    answerIncomingCall();
+  }, [activeLeadCall, answerIncomingCall, callStatus]);
 
   const load = useCallback(async () => {
     if (!userId) {
@@ -528,28 +544,59 @@ export default function LeadsPage() {
           {/* In-call controls */}
           {showCallControls && (
             <div className="border-t border-slate-100 px-4 py-2">
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={() => { const next = !isMuted; mute(next); setIsMuted(next); }}
-                  disabled={!activeCall}
-                  className="inline-flex items-center gap-1.5 rounded-md bg-amber-50 px-3 py-1.5 text-xs font-semibold text-amber-800 ring-1 ring-amber-200 transition hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  {isMuted ? (
-                    <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="1" y1="1" x2="23" y2="23"/><path d="M9 9v3a3 3 0 005.12 2.12M15 9.34V4a3 3 0 00-5.94-.6"/><path d="M17 16.95A7 7 0 015 12v-2m14 0v2a7 7 0 01-.11 1.23M12 19v4M8 23h8"/></svg>
-                  ) : (
-                    <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z"/><path d="M19 10v2a7 7 0 01-14 0v-2M12 19v4M8 23h8"/></svg>
-                  )}
-                  {isMuted ? "Unmute" : "Mute"}
-                </button>
-                <button
-                  onClick={() => { hangup(); setCallDurationSeconds(0); }}
-                  className="inline-flex items-center gap-1.5 rounded-md bg-rose-50 px-3 py-1.5 text-xs font-semibold text-rose-700 ring-1 ring-rose-200 transition hover:bg-rose-100"
-                >
-                  <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M10.68 13.31a16 16 0 003.41 2.6l1.27-1.27a2 2 0 012.11-.45 12.84 12.84 0 002.81.7 2 2 0 011.72 2v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07 19.42 19.42 0 01-3.33-2.67m-2.67-3.34a19.79 19.79 0 01-3.07-8.63A2 2 0 014.11 2h3a2 2 0 012 1.72 12.84 12.84 0 00.7 2.81 2 2 0 01-.45 2.11L8.09 9.91"/><line x1="23" y1="1" x2="1" y2="23"/></svg>
-                  Hang Up
-                </button>
-              </div>
-              {activeLeadCall ? (
+              {callStatus === "ringing" ? (
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="mr-auto text-xs font-semibold text-slate-700">
+                    Incoming call{incomingCaller ? ` from ${incomingCaller}` : ""}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCallDurationSeconds(0);
+                      answerIncomingCall();
+                    }}
+                    disabled={!activeCall}
+                    className="inline-flex items-center gap-1.5 rounded-md bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-700 ring-1 ring-emerald-200 transition hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07A19.5 19.5 0 013.07 9.81a19.79 19.79 0 01-3.07-8.68A2 2 0 012 1h3a2 2 0 012 1.72 12.84 12.84 0 00.7 2.81 2 2 0 01-.45 2.11L6.09 8.91a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0122 16.92z"/></svg>
+                    Answer
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      rejectIncomingCall();
+                      setCallDurationSeconds(0);
+                    }}
+                    disabled={!activeCall}
+                    className="inline-flex items-center gap-1.5 rounded-md bg-rose-50 px-3 py-1.5 text-xs font-semibold text-rose-700 ring-1 ring-rose-200 transition hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    Decline
+                  </button>
+                </div>
+              ) : (
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => { const next = !isMuted; mute(next); setIsMuted(next); }}
+                    disabled={!activeCall}
+                    className="inline-flex items-center gap-1.5 rounded-md bg-amber-50 px-3 py-1.5 text-xs font-semibold text-amber-800 ring-1 ring-amber-200 transition hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {isMuted ? (
+                      <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="1" y1="1" x2="23" y2="23"/><path d="M9 9v3a3 3 0 005.12 2.12M15 9.34V4a3 3 0 00-5.94-.6"/><path d="M17 16.95A7 7 0 015 12v-2m14 0v2a7 7 0 01-.11 1.23M12 19v4M8 23h8"/></svg>
+                    ) : (
+                      <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z"/><path d="M19 10v2a7 7 0 01-14 0v-2M12 19v4M8 23h8"/></svg>
+                    )}
+                    {isMuted ? "Unmute" : "Mute"}
+                  </button>
+                  <button
+                    onClick={() => { hangup(); setCallDurationSeconds(0); }}
+                    className="inline-flex items-center gap-1.5 rounded-md bg-rose-50 px-3 py-1.5 text-xs font-semibold text-rose-700 ring-1 ring-rose-200 transition hover:bg-rose-100"
+                  >
+                    <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M10.68 13.31a16 16 0 003.41 2.6l1.27-1.27a2 2 0 012.11-.45 12.84 12.84 0 002.81.7 2 2 0 011.72 2v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07 19.42 19.42 0 01-3.33-2.67m-2.67-3.34a19.79 19.79 0 01-3.07-8.63A2 2 0 014.11 2h3a2 2 0 012 1.72 12.84 12.84 0 00.7 2.81 2 2 0 01-.45 2.11L8.09 9.91"/><line x1="23" y1="1" x2="1" y2="23"/></svg>
+                    Hang Up
+                  </button>
+                </div>
+              )}
+              {activeLeadCall && callStatus !== "ringing" ? (
                 <p className="mt-2 text-xs font-medium text-slate-600">
                   Calling <span className="text-slate-900">{activeLeadCall.name}</span> at{" "}
                   <span className="text-slate-900">{activeLeadCall.phone}</span>

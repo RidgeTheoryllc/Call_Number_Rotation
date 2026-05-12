@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Call, Device } from "@twilio/voice-sdk";
 
 type TwilioCallStatus = "idle" | "registering" | "ready" | "ringing" | "in-progress" | "completed" | "error";
@@ -61,7 +61,6 @@ export function useTwilioDevice(identityHint?: string) {
           if (isCancelled) return;
           setCallStatus("ringing");
           setActiveCall(incomingCall);
-          incomingCall.accept();
 
           incomingCall.on("accept", () => {
             if (isCancelled) return;
@@ -134,18 +133,28 @@ export function useTwilioDevice(identityHint?: string) {
     };
   }, [resolvedIdentity]);
 
-  const hangup = () => {
+  const hangup = useCallback(() => {
     if (activeCall) {
       activeCall.disconnect();
     } else {
       device?.disconnectAll();
     }
-  };
+  }, [activeCall, device]);
 
-  const mute = (muted: boolean) => {
+  const answerIncomingCall = useCallback(() => {
+    if (!activeCall || callStatus !== "ringing") return;
+    activeCall.accept();
+  }, [activeCall, callStatus]);
+
+  const rejectIncomingCall = useCallback(() => {
+    if (!activeCall || callStatus !== "ringing") return;
+    activeCall.reject();
+  }, [activeCall, callStatus]);
+
+  const mute = useCallback((muted: boolean) => {
     if (!activeCall) return;
     activeCall.mute(muted);
-  };
+  }, [activeCall]);
 
   return {
     device,
@@ -155,6 +164,8 @@ export function useTwilioDevice(identityHint?: string) {
     callStatus,
     deviceError,
     hangup,
+    answerIncomingCall,
+    rejectIncomingCall,
     mute,
   };
 }
