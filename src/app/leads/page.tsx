@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import Papa from "papaparse";
 import { AppShell } from "@/components/app-shell";
 import type { LeadRecord } from "@/types";
@@ -804,6 +805,12 @@ export default function LeadsPage() {
                   <td className="px-4 py-3 text-slate-600">{lead.result ?? "—"}</td>
                   <td className="px-4 py-3">
                     <div className="flex items-center justify-end gap-2">
+                      <Link
+                        href={`/messages?lead_id=${encodeURIComponent(lead.id)}`}
+                        className="inline-flex h-7 w-16 items-center justify-center rounded-md bg-indigo-50 text-xs font-semibold text-indigo-700 ring-1 ring-indigo-200 transition hover:bg-indigo-100"
+                      >
+                        SMS
+                      </Link>
                       <button
                         disabled={Boolean(callingLeadIds[lead.id]) || !deviceReady || !identity}
                         onClick={() => dialLead(lead)}

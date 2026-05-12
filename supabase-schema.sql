@@ -41,3 +41,52 @@ create table if not exists notes (
   updated_at timestamptz not null default now(),
   created_at timestamptz not null default now()
 );
+
+create table if not exists message_logs (
+  id uuid primary key default uuid_generate_v4(),
+  user_id uuid not null,
+  lead_id uuid references leads(id) on delete set null,
+  lead_name text,
+  phone text not null,
+  did text not null,
+  direction text not null check (direction in ('inbound', 'outbound')),
+  body text not null,
+  status text not null default 'queued' check (
+    status in (
+      'queued',
+      'accepted',
+      'sending',
+      'sent',
+      'delivered',
+      'undelivered',
+      'failed',
+      'received'
+    )
+  ),
+  twilio_message_sid text unique,
+  error_message text,
+  timestamp timestamptz not null default now(),
+  created_at timestamptz not null default now()
+);
+
+create index if not exists message_logs_user_timestamp_idx
+  on message_logs (user_id, timestamp desc);
+
+create index if not exists message_logs_conversation_idx
+  on message_logs (user_id, phone, did, timestamp desc);
+
+create index if not exists message_logs_lead_id_idx
+  on message_logs (lead_id);
+
+create table if not exists message_opt_outs (
+  id uuid primary key default uuid_generate_v4(),
+  user_id uuid not null,
+  phone text not null,
+  did text,
+  reason text not null default 'STOP',
+  created_at timestamptz not null default now(),
+  unique (user_id, phone, did)
+);
+
+create index if not exists message_opt_outs_user_phone_idx
+  on message_opt_outs (user_id, phone);

@@ -7,6 +7,16 @@ export type CallResult =
   | "failed"
   | "spam_flagged";
 export type CallDirection = "inbound" | "outbound";
+export type MessageDirection = "inbound" | "outbound";
+export type MessageStatus =
+  | "queued"
+  | "accepted"
+  | "sending"
+  | "sent"
+  | "delivered"
+  | "undelivered"
+  | "failed"
+  | "received";
 
 export interface DidRecord {
   id: string;
@@ -42,6 +52,22 @@ export interface CallLogRecord {
   duration: number | null;
   timestamp: string;
   call_notes?: string | null;
+  created_at?: string;
+}
+
+export interface MessageLogRecord {
+  id: string;
+  user_id: string;
+  lead_id: string | null;
+  lead_name: string | null;
+  phone: string;
+  did: string;
+  direction: MessageDirection;
+  body: string;
+  status: MessageStatus;
+  twilio_message_sid: string | null;
+  error_message: string | null;
+  timestamp: string;
   created_at?: string;
 }
 

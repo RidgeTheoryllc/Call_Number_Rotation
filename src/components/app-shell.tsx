@@ -10,6 +10,7 @@ const navItems = [
   { href: "/", label: "Dashboard" },
   { href: "/did-pool", label: "DID Pool" },
   { href: "/leads", label: "Leads" },
+  { href: "/messages", label: "Messages" },
   { href: "/call-logs", label: "Call Logs" },
 ];
 
