@@ -23,6 +23,8 @@ interface DidDiagnostic {
   notes: string[];
 }
 
+type DidPoolDiagnosticRow = Pick<DidRecord, "did"> & { user_id: string | null };
+
 function resolvePublicBaseUrl(req: NextRequest): string {
   const configured = process.env.NEXT_PUBLIC_BASE_URL?.trim();
   return configured && configured.length > 0 ? configured : req.nextUrl.origin;
@@ -50,7 +52,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
-  const rows = (data ?? []) as Pick<DidRecord, "did"> & { user_id: string | null }[];
+  const rows = (data ?? []) as DidPoolDiagnosticRow[];
   const baseUrl = resolvePublicBaseUrl(req);
   const expectedInboundUrl = new URL("/api/twilio/inbound", baseUrl).toString();
   const client = twilio(accountSid, authToken);
@@ -97,7 +99,7 @@ export async function GET(req: NextRequest) {
 
     return {
       did,
-      user_id: (row as { user_id: string | null }).user_id ?? null,
+      user_id: row.user_id ?? null,
       found_in_twilio: Boolean(match),
       twilio: match
         ? {
