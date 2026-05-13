@@ -3,21 +3,31 @@ import twilio from "twilio";
 import { getSupabaseServerClient } from "@/lib/supabase";
 import { normalizePhone } from "@/lib/utils";
 
+export const dynamic = "force-dynamic";
+
 const STOP_KEYWORDS = new Set(["STOP", "STOPALL", "UNSUBSCRIBE", "CANCEL", "END", "QUIT"]);
 const START_KEYWORDS = new Set(["START", "UNSTOP"]);
 
-async function resolveUserIdFromDid(didNumber: string): Promise<string | null> {
+async function resolveUserIdFromDid(toNormalized: string, toRaw?: string): Promise<string | null> {
   const supabase = getSupabaseServerClient();
-  const normalizedDid = normalizePhone(didNumber);
+  const normalizedDid = normalizePhone(toNormalized);
   const normalizedDigits = normalizedDid.replace(/\D/g, "");
   const last10 = normalizedDigits.slice(-10);
 
-  const { data: direct } = await supabase
-    .from("did_pool")
-    .select("user_id")
-    .eq("did", didNumber)
-    .maybeSingle();
-  if (direct?.user_id) return direct.user_id;
+  const tryExact = async (value: string) => {
+    const v = value.trim();
+    if (!v) return null;
+    const { data } = await supabase.from("did_pool").select("user_id").eq("did", v).maybeSingle();
+    return data?.user_id ?? null;
+  };
+
+  const exactCandidates = [toRaw?.trim(), toNormalized, normalizedDid].filter(
+    (v): v is string => typeof v === "string" && v.trim().length > 0,
+  );
+  for (const candidate of new Set(exactCandidates)) {
+    const uid = await tryExact(candidate);
+    if (uid) return uid;
+  }
 
   const { data: rows, error } = await supabase.from("did_pool").select("did, user_id");
   if (error) return null;
@@ -39,7 +49,8 @@ export async function POST(req: NextRequest) {
   try {
     const form = await req.formData();
     const from = normalizePhone(String(form.get("From") ?? ""));
-    const to = normalizePhone(String(form.get("To") ?? ""));
+    const toRaw = String(form.get("To") ?? form.get("Called") ?? "").trim();
+    const to = normalizePhone(toRaw);
     const bodyRaw = String(form.get("Body") ?? "").trim();
     const numMedia = Number.parseInt(String(form.get("NumMedia") ?? "0"), 10) || 0;
     const body =
@@ -51,7 +62,7 @@ export async function POST(req: NextRequest) {
       return new NextResponse(response.toString(), { headers: { "Content-Type": "text/xml" } });
     }
 
-    const userId = await resolveUserIdFromDid(to);
+    const userId = await resolveUserIdFromDid(to, toRaw);
     if (!userId) {
       console.warn("[twilio/messages/inbound] no did_pool match for To=", to);
       response.message("This number is not currently monitored.");
@@ -101,6 +112,8 @@ export async function POST(req: NextRequest) {
       ? await supabase.from("message_logs").upsert(messagePayload, { onConflict: "twilio_message_sid" })
       : await supabase.from("message_logs").insert(messagePayload);
     if (insertError) throw insertError;
+
+    console.log("[twilio/messages/inbound] stored", { userId, messageSid, from, to });
 
     return new NextResponse(response.toString(), { headers: { "Content-Type": "text/xml" } });
   } catch (error) {

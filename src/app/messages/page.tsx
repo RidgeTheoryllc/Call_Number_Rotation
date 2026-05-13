@@ -152,8 +152,8 @@ export default function MessagesPage() {
       if (!hasLoadedMessagesRef.current) setIsLoading(true);
       try {
         const [messagesRes, leadsRes] = await Promise.all([
-          fetch(`/api/messages?user_id=${encodeURIComponent(activeUserId)}`),
-          fetch(`/api/leads?user_id=${encodeURIComponent(activeUserId)}`),
+          fetch(`/api/messages?user_id=${encodeURIComponent(activeUserId)}`, { cache: "no-store" }),
+          fetch(`/api/leads?user_id=${encodeURIComponent(activeUserId)}`, { cache: "no-store" }),
         ]);
         const [messagesJson, leadsJson] = await Promise.all([messagesRes.json(), leadsRes.json()]);
 

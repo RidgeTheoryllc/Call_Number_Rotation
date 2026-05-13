@@ -14,6 +14,7 @@ interface PerNumberResult {
   twilioSid?: string;
   smsUrl?: string;
   statusCallback?: string;
+  smsApplicationSid?: string;
   error?: string;
 }
 
@@ -80,11 +81,13 @@ export async function POST(req: NextRequest) {
       }
 
       const target = matches[0];
+      // If a Messaging TwiML App SID is set, Twilio may never invoke smsUrl — clear it so the webhook URL is used.
       const updated = await client.incomingPhoneNumbers(target.sid).update({
         smsUrl,
         smsMethod: "POST",
         smsFallbackUrl: smsUrl,
         smsFallbackMethod: "POST",
+        smsApplicationSid: "",
         statusCallback: statusCallbackUrl,
         statusCallbackMethod: "POST",
       });
@@ -95,6 +98,7 @@ export async function POST(req: NextRequest) {
         twilioSid: updated.sid,
         smsUrl: updated.smsUrl,
         statusCallback: updated.statusCallback,
+        smsApplicationSid: updated.smsApplicationSid ?? "",
       });
     } catch (error) {
       results.push({

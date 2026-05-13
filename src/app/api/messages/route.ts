@@ -3,6 +3,8 @@ import { getSupabaseServerClient } from "@/lib/supabase";
 import { normalizePhone } from "@/lib/utils";
 import type { MessageLogRecord } from "@/types";
 
+export const dynamic = "force-dynamic";
+
 export async function GET(req: NextRequest) {
   try {
     const userId = req.nextUrl.searchParams.get("user_id");
@@ -34,7 +36,11 @@ export async function GET(req: NextRequest) {
       };
     });
 
-    return NextResponse.json(enrichedMessages);
+    return NextResponse.json(enrichedMessages, {
+      headers: {
+        "Cache-Control": "private, no-store, no-cache, must-revalidate, max-age=0",
+      },
+    });
   } catch (error) {
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Unexpected error" },
