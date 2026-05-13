@@ -3,7 +3,7 @@ import twilio from "twilio";
 import { selectBestDid } from "@/lib/db";
 import { getValidatedDefaultMessagingDid } from "@/lib/messaging-default";
 import { getSupabaseServerClient } from "@/lib/supabase";
-import { normalizePhone } from "@/lib/utils";
+import { conversationLeadKey, normalizePhone } from "@/lib/utils";
 import type { DidRecord, LeadRecord, MessageStatus } from "@/types";
 
 interface SendMessageBody {
@@ -71,8 +71,8 @@ export async function POST(req: NextRequest) {
       if (!lead) return NextResponse.json({ error: "Lead not found" }, { status: 404 });
     }
 
-    const to = normalizePhone(lead?.phone ?? body.phone ?? "");
-    if (!to) {
+    const to = conversationLeadKey(String(lead?.phone ?? body.phone ?? "").trim());
+    if (!to.replace(/\D/g, "").length) {
       return NextResponse.json({ error: "phone or lead_id is required" }, { status: 400 });
     }
 

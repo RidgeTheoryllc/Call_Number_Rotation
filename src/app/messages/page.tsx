@@ -3,7 +3,7 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AppShell } from "@/components/app-shell";
 import { getSupabaseBrowserClient } from "@/lib/supabase";
-import { normalizePhone } from "@/lib/utils";
+import { conversationLeadKey, normalizePhone } from "@/lib/utils";
 import type { LeadRecord, MessageLogRecord, MessageStatus } from "@/types";
 
 interface MessageConversation {
@@ -50,7 +50,9 @@ function buildConversations(messages: MessageLogRecord[]): MessageConversation[]
   const conversationsByKey = new Map<string, MessageConversation>();
 
   for (const message of messages) {
-    const key = `${message.phone}|${message.did}`;
+    const leadKey = conversationLeadKey(message.phone);
+    const didKey = normalizePhone(message.did);
+    const key = `${leadKey}|${didKey}`;
     const existing = conversationsByKey.get(key);
     const leadName = message.lead_name?.trim() || "Unknown Lead";
 
@@ -59,8 +61,8 @@ function buildConversations(messages: MessageLogRecord[]): MessageConversation[]
         id: key,
         leadId: message.lead_id,
         leadName,
-        phone: message.phone,
-        did: message.did,
+        phone: leadKey,
+        did: didKey,
         lastMessage: message.body,
         lastTimestamp: message.timestamp,
         unreadCount: message.direction === "inbound" && message.status === "received" ? 1 : 0,
@@ -116,7 +118,8 @@ export default function MessagesPage() {
   const matchingLeadConversation = selectedLead
     ? conversations.find(
         (conversation) =>
-          normalizePhone(conversation.phone) === normalizePhone(selectedLead.phone) || conversation.leadId === selectedLead.id,
+          conversationLeadKey(conversation.phone) === conversationLeadKey(selectedLead.phone) ||
+          conversation.leadId === selectedLead.id,
       ) ?? null
     : null;
   const selectedConversation = selectedLead
@@ -225,7 +228,7 @@ export default function MessagesPage() {
 
       const inserted = json as MessageLogRecord;
       setMessages((prev) => [...prev, inserted]);
-      setSelectedConversationId(`${inserted.phone}|${inserted.did}`);
+      setSelectedConversationId(`${conversationLeadKey(inserted.phone)}|${normalizePhone(inserted.did)}`);
       setSelectedLeadId("");
       setDraftMessage("");
       void loadMessages(userId);

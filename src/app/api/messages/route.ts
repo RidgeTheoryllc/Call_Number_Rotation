@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase";
-import { normalizePhone } from "@/lib/utils";
+import { conversationLeadKey, normalizePhone } from "@/lib/utils";
 import type { MessageLogRecord } from "@/types";
 
 export const dynamic = "force-dynamic";
@@ -22,13 +22,13 @@ export async function GET(req: NextRequest) {
 
     const leadByPhone = new Map<string, { id: string; name: string }>();
     for (const lead of leads ?? []) {
-      const key = normalizePhone(String(lead.phone ?? ""));
+      const key = conversationLeadKey(String(lead.phone ?? ""));
       if (!key || leadByPhone.has(key)) continue;
       leadByPhone.set(key, { id: String(lead.id), name: String(lead.name ?? "Unknown") });
     }
 
     const enrichedMessages = ((messages ?? []) as MessageLogRecord[]).map((message) => {
-      const matchedLead = leadByPhone.get(normalizePhone(message.phone));
+      const matchedLead = leadByPhone.get(conversationLeadKey(message.phone));
       return {
         ...message,
         lead_id: message.lead_id ?? matchedLead?.id ?? null,

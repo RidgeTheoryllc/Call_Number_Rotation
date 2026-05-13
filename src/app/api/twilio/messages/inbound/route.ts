@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import twilio from "twilio";
 import { getSupabaseServerClient } from "@/lib/supabase";
-import { normalizePhone } from "@/lib/utils";
+import { conversationLeadKey, normalizePhone } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
 
@@ -70,12 +70,13 @@ export async function POST(req: NextRequest) {
     }
 
     const supabase = getSupabaseServerClient();
+    const leadPhoneKey = conversationLeadKey(from);
     const normalizedKeyword = bodyRaw.trim().toUpperCase();
     if (STOP_KEYWORDS.has(normalizedKeyword)) {
       await supabase.from("message_opt_outs").upsert(
         {
           user_id: userId,
-          phone: from,
+          phone: leadPhoneKey,
           did: to,
           reason: normalizedKeyword,
         },
@@ -83,7 +84,7 @@ export async function POST(req: NextRequest) {
       );
       response.message("You have been unsubscribed and will no longer receive SMS messages from this number.");
     } else if (START_KEYWORDS.has(normalizedKeyword)) {
-      await supabase.from("message_opt_outs").delete().eq("user_id", userId).eq("phone", from).eq("did", to);
+      await supabase.from("message_opt_outs").delete().eq("user_id", userId).eq("phone", leadPhoneKey).eq("did", to);
       response.message("You have been resubscribed to SMS messages from this number.");
     }
 
@@ -95,12 +96,14 @@ export async function POST(req: NextRequest) {
       console.error("[twilio/messages/inbound] leads lookup failed (inbound still logged)", leadsError);
     }
 
-    const matchedLead = (leads ?? []).find((lead) => normalizePhone(String(lead.phone ?? "")) === from);
+    const matchedLead = (leads ?? []).find(
+      (lead) => conversationLeadKey(String(lead.phone ?? "")) === leadPhoneKey,
+    );
     const messagePayload = {
       user_id: userId,
       lead_id: matchedLead?.id ?? null,
       lead_name: matchedLead?.name ?? null,
-      phone: from,
+      phone: leadPhoneKey,
       did: to,
       direction: "inbound",
       body,

@@ -2,6 +2,17 @@ export function normalizePhone(phone: string): string {
   return phone.replace(/[^\d+]/g, "");
 }
 
+/** One key per US lead line so 310… and +1310… merge in SMS threads. */
+export function conversationLeadKey(phone: string): string {
+  const stripped = normalizePhone(phone);
+  const digits = stripped.replace(/\D/g, "");
+  if (digits.length === 10) return `+1${digits}`;
+  if (digits.length === 11 && digits.startsWith("1")) return `+${digits}`;
+  if (stripped.startsWith("+")) return stripped;
+  if (digits.length > 0) return `+${digits}`;
+  return stripped;
+}
+
 export function extractAreaCode(phone: string): string {
   const digits = phone.replace(/\D/g, "");
 
