@@ -6,7 +6,7 @@ import { useEffect, useMemo, useState } from "react";
 import { getSupabaseBrowserClient } from "@/lib/supabase";
 import { NotepadDrawer } from "@/components/notepad-drawer";
 
-type NavGlyphId = "dashboard" | "didPool" | "leads" | "messages" | "callLogs";
+type NavGlyphId = "dashboard" | "didPool" | "leads" | "callbacks" | "messages" | "callLogs";
 
 function NavGlyph({ id }: { id: NavGlyphId }) {
   const cls = "h-5 w-5 shrink-0";
@@ -35,6 +35,16 @@ function NavGlyph({ id }: { id: NavGlyphId }) {
           <path d="M16 3.13a4 4 0 0 1 0 7.75" />
         </svg>
       );
+    case "callbacks":
+      return (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" className={cls} aria-hidden>
+          <rect x="3" y="4" width="18" height="18" rx="2" />
+          <path d="M16 2v4" />
+          <path d="M8 2v4" />
+          <path d="M3 10h18" />
+          <path d="M12 14v3l2 1" />
+        </svg>
+      );
     case "messages":
       return (
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" className={cls} aria-hidden>
@@ -59,6 +69,7 @@ const navItems: { href: string; label: string; glyph: NavGlyphId }[] = [
   { href: "/", label: "Dashboard", glyph: "dashboard" },
   { href: "/did-pool", label: "DID Pool", glyph: "didPool" },
   { href: "/leads", label: "Leads", glyph: "leads" },
+  { href: "/callbacks", label: "Callbacks", glyph: "callbacks" },
   { href: "/messages", label: "Messages", glyph: "messages" },
   { href: "/call-logs", label: "Call Logs", glyph: "callLogs" },
 ];

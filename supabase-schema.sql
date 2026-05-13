@@ -21,6 +21,8 @@ create table if not exists leads (
   status text not null default 'pending' check (status in ('pending', 'dialed', 'completed')),
   assigned_did text,
   result text,
+  callback_at timestamptz,
+  callback_notes text,
   created_at timestamptz not null default now()
 );
 

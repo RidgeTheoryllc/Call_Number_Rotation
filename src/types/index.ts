@@ -39,6 +39,9 @@ export interface LeadRecord {
   status: LeadStatus;
   assigned_did: string | null;
   result: CallResult | null;
+  /** When the rep plans to call back (ISO string from API). */
+  callback_at?: string | null;
+  callback_notes?: string | null;
   created_at?: string;
 }
 

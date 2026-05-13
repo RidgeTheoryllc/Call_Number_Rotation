@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
+import { CallbackReminderBar } from "@/components/callback-reminder-bar";
 import { TwilioDeviceProvider } from "@/components/twilio-device-provider";
 import { WorkspaceDataCacheProvider } from "@/components/workspace-data-cache";
 import "./globals.css";
@@ -31,7 +32,10 @@ export default function RootLayout({
     >
       <body className="min-h-full flex flex-col bg-slate-50 text-slate-900">
         <TwilioDeviceProvider>
-          <WorkspaceDataCacheProvider>{children}</WorkspaceDataCacheProvider>
+          <WorkspaceDataCacheProvider>
+            <CallbackReminderBar />
+            {children}
+          </WorkspaceDataCacheProvider>
         </TwilioDeviceProvider>
       </body>
     </html>

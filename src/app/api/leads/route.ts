@@ -116,15 +116,47 @@ export async function PATCH(req: NextRequest) {
     const status = body?.status as string | undefined;
     const assignedDid = body?.assigned_did as string | undefined;
     const result = body?.result as string | undefined;
+    const hasCallbackAt = Object.prototype.hasOwnProperty.call(body ?? {}, "callback_at");
+    const hasCallbackNotes = Object.prototype.hasOwnProperty.call(body ?? {}, "callback_notes");
+    const callbackAtRaw = (body as { callback_at?: unknown })?.callback_at;
+    const callbackNotesRaw = (body as { callback_notes?: unknown })?.callback_notes;
 
     if (!id || !userId) {
       return NextResponse.json({ error: "Lead id and user_id are required" }, { status: 400 });
     }
 
-    const updatePayload: Record<string, string> = {};
+    const updatePayload: Record<string, string | null> = {};
     if (status) updatePayload.status = status;
     if (assignedDid) updatePayload.assigned_did = assignedDid;
     if (result) updatePayload.result = result;
+
+    if (hasCallbackAt) {
+      if (callbackAtRaw === null || callbackAtRaw === "") {
+        updatePayload.callback_at = null;
+      } else if (typeof callbackAtRaw === "string") {
+        const parsed = new Date(callbackAtRaw);
+        if (Number.isNaN(parsed.getTime())) {
+          return NextResponse.json({ error: "callback_at must be a valid ISO date string or null" }, { status: 400 });
+        }
+        updatePayload.callback_at = parsed.toISOString();
+      } else {
+        return NextResponse.json({ error: "callback_at must be a string or null" }, { status: 400 });
+      }
+    }
+
+    if (hasCallbackNotes) {
+      if (callbackNotesRaw === null || callbackNotesRaw === "") {
+        updatePayload.callback_notes = null;
+      } else if (typeof callbackNotesRaw === "string") {
+        updatePayload.callback_notes = callbackNotesRaw.slice(0, 4000);
+      } else {
+        return NextResponse.json({ error: "callback_notes must be a string or null" }, { status: 400 });
+      }
+    }
+
+    if (Object.keys(updatePayload).length === 0) {
+      return NextResponse.json({ error: "No fields to update" }, { status: 400 });
+    }
 
     const supabase = getSupabaseServerClient();
     const { data, error } = await supabase

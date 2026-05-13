@@ -4,9 +4,11 @@ import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "re
 import Link from "next/link";
 import Papa from "papaparse";
 import { AppShell } from "@/components/app-shell";
+import { CallbackSchedulePicker } from "@/components/callback-schedule-picker";
 import type { LeadRecord } from "@/types";
 import { useTwilioDeviceContext } from "@/components/twilio-device-provider";
 import { useWorkspaceDataCache } from "@/components/workspace-data-cache";
+import { isoToDatetimeLocalValue, isSameLocalCalendarDay } from "@/lib/callback-schedule";
 import { getSupabaseBrowserClient } from "@/lib/supabase";
 
 function sortLeadsByPriority(rows: LeadRecord[]): LeadRecord[] {
@@ -20,7 +22,15 @@ function sortLeadsByPriority(rows: LeadRecord[]): LeadRecord[] {
   });
 }
 
-type LeadSortOption = "priority" | "newest" | "oldest" | "name-asc" | "name-desc" | "status" | "area-code";
+type LeadSortOption =
+  | "priority"
+  | "newest"
+  | "oldest"
+  | "name-asc"
+  | "name-desc"
+  | "status"
+  | "area-code"
+  | "callback";
 
 const statusRank: Record<LeadRecord["status"], number> = {
   pending: 0,
@@ -55,6 +65,12 @@ function sortLeads(rows: LeadRecord[], sortOption: LeadSortOption): LeadRecord[]
       }
       case "area-code":
         return compareText(a.area_code, b.area_code) || compareText(a.name, b.name);
+      case "callback": {
+        const at = (x: LeadRecord) => (x.callback_at ? new Date(x.callback_at).getTime() : Number.POSITIVE_INFINITY);
+        const diff = at(a) - at(b);
+        if (diff !== 0) return diff;
+        return getLeadCreatedTime(b) - getLeadCreatedTime(a);
+      }
       default:
         return 0;
     }
@@ -84,6 +100,10 @@ export default function LeadsPage() {
   const [autoDialEnabled, setAutoDialEnabled] = useState(false);
   const autoDialLockRef = useRef(false);
   const latestInboundLogIdRef = useRef<string | null>(null);
+  const [scheduleLead, setScheduleLead] = useState<LeadRecord | null>(null);
+  const [scheduleAt, setScheduleAt] = useState("");
+  const [scheduleNotes, setScheduleNotes] = useState("");
+  const [scheduleSaving, setScheduleSaving] = useState(false);
   const {
     identity,
     deviceReady,
@@ -119,6 +139,18 @@ export default function LeadsPage() {
     return () => window.clearTimeout(timeoutId);
   }, [toast]);
 
+  useEffect(() => {
+    if (!scheduleLead) return;
+    queueMicrotask(() => {
+      setScheduleNotes(scheduleLead.callback_notes ?? "");
+      setScheduleAt(
+        scheduleLead.callback_at
+          ? isoToDatetimeLocalValue(scheduleLead.callback_at)
+          : isoToDatetimeLocalValue(new Date(Date.now() + 15 * 60 * 1000).toISOString()),
+      );
+    });
+  }, [scheduleLead]);
+
   const filteredAndSortedLeads = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
     const filtered = query
@@ -130,6 +162,8 @@ export default function LeadsPage() {
             lead.status,
             lead.assigned_did,
             lead.result,
+            lead.callback_notes,
+            lead.callback_at,
           ]
             .filter(Boolean)
             .join(" ")
@@ -186,6 +220,71 @@ export default function LeadsPage() {
       setIsLoading(false);
     }
   }, [userId, workspaceCache]);
+
+  const saveCallbackSchedule = async () => {
+    if (!userId || !scheduleLead) return;
+    if (!scheduleAt.trim()) {
+      showToast("warn", "Pick a date and time for the callback.");
+      return;
+    }
+    const parsed = new Date(scheduleAt);
+    if (Number.isNaN(parsed.getTime())) {
+      showToast("warn", "That date and time is not valid.");
+      return;
+    }
+    setScheduleSaving(true);
+    setError("");
+    try {
+      const res = await fetch("/api/leads", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: scheduleLead.id,
+          user_id: userId,
+          callback_at: parsed.toISOString(),
+          callback_notes: scheduleNotes.trim() ? scheduleNotes.trim() : null,
+        }),
+      });
+      const json = await res.json();
+      if (!res.ok) {
+        setError(json.error ?? "Failed to save callback.");
+        return;
+      }
+      showToast("success", "Callback scheduled.");
+      setScheduleLead(null);
+      await load();
+    } finally {
+      setScheduleSaving(false);
+    }
+  };
+
+  const clearCallbackSchedule = async () => {
+    if (!userId || !scheduleLead) return;
+    setScheduleSaving(true);
+    setError("");
+    try {
+      const res = await fetch("/api/leads", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: scheduleLead.id,
+          user_id: userId,
+          callback_at: null,
+          callback_notes: null,
+        }),
+      });
+      const json = await res.json();
+      if (!res.ok) {
+        setError(json.error ?? "Failed to clear callback.");
+        return;
+      }
+      showToast("success", "Callback schedule cleared.");
+      setScheduleLead(null);
+      await load();
+    } finally {
+      setScheduleSaving(false);
+    }
+  };
 
   const checkInboundCallbacks = useCallback(async () => {
     if (!userId) return;
@@ -730,6 +829,7 @@ export default function LeadsPage() {
               <option value="name-desc">Name: Z to A</option>
               <option value="status">Status</option>
               <option value="area-code">Area code</option>
+              <option value="callback">Callback time (soonest first)</option>
             </select>
           </div>
           <p className="text-sm font-medium text-slate-500 sm:pb-2">
@@ -747,7 +847,7 @@ export default function LeadsPage() {
         </div>
 
         {/* Leads Table */}
-        <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+        <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
           <table className="min-w-full text-sm">
             <thead>
               <tr className="border-b border-slate-200 bg-slate-50">
@@ -760,10 +860,12 @@ export default function LeadsPage() {
                     className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
                   />
                 </th>
-                {["Name", "Phone", "Area Code", "Status", "Assigned DID", "Result", "Actions"].map((col) => (
+                {["Name", "Phone", "Area Code", "Status", "Assigned DID", "Result", "Callback", "Actions"].map((col) => (
                   <th
                     key={col}
-                    className={`px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wider text-slate-500 ${col === "Actions" ? "text-right" : ""}`}
+                    className={`px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wider text-slate-500 ${
+                      col === "Actions" ? "min-w-[270px] whitespace-nowrap text-right" : ""
+                    }`}
                   >
                     {col}
                   </th>
@@ -773,7 +875,7 @@ export default function LeadsPage() {
             <tbody className="divide-y divide-slate-100">
               {isLoading && (
                 <tr>
-                  <td colSpan={8} className="px-4 py-10 text-center text-sm text-slate-400">
+                  <td colSpan={9} className="px-4 py-10 text-center text-sm text-slate-400">
                     <span className="inline-flex items-center gap-2">
                       <span className="h-4 w-4 animate-spin rounded-full border-2 border-slate-300 border-t-slate-600" />
                       Loading leads…
@@ -783,14 +885,14 @@ export default function LeadsPage() {
               )}
               {!isLoading && leads.length === 0 && (
                 <tr>
-                  <td colSpan={8} className="px-4 py-12 text-center text-sm text-slate-400">
+                  <td colSpan={9} className="px-4 py-12 text-center text-sm text-slate-400">
                     No leads yet. Add a lead above or upload a CSV to get started.
                   </td>
                 </tr>
               )}
               {!isLoading && leads.length > 0 && filteredAndSortedLeads.length === 0 && (
                 <tr>
-                  <td colSpan={8} className="px-4 py-12 text-center text-sm text-slate-400">
+                  <td colSpan={9} className="px-4 py-12 text-center text-sm text-slate-400">
                     No leads match your search.
                   </td>
                 </tr>
@@ -824,18 +926,52 @@ export default function LeadsPage() {
                   </td>
                   <td className="px-4 py-3 font-mono text-xs text-slate-500">{lead.assigned_did ?? "—"}</td>
                   <td className="px-4 py-3 text-slate-600">{lead.result ?? "—"}</td>
-                  <td className="px-4 py-3">
-                    <div className="flex items-center justify-end gap-2">
+                  <td className="max-w-[200px] px-4 py-3 text-slate-600">
+                    {lead.callback_at ? (
+                      <div className="flex flex-col gap-0.5">
+                        <span className="whitespace-nowrap tabular-nums text-slate-800">
+                          {new Date(lead.callback_at).toLocaleString(undefined, {
+                            month: "short",
+                            day: "numeric",
+                            year: "numeric",
+                            hour: "numeric",
+                            minute: "2-digit",
+                          })}
+                        </span>
+                        {isSameLocalCalendarDay(lead.callback_at) ? (
+                          <span className="w-fit rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-800">
+                            Today
+                          </span>
+                        ) : null}
+                        {lead.callback_notes ? (
+                          <span className="line-clamp-2 text-xs text-slate-500" title={lead.callback_notes}>
+                            {lead.callback_notes}
+                          </span>
+                        ) : null}
+                      </div>
+                    ) : (
+                      <span className="text-slate-400">—</span>
+                    )}
+                  </td>
+                  <td className="min-w-[270px] whitespace-nowrap px-4 py-3">
+                    <div className="flex flex-nowrap items-center justify-end gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => setScheduleLead(lead)}
+                        className="inline-flex h-7 shrink-0 items-center justify-center rounded-md bg-violet-50 px-2.5 text-xs font-semibold text-violet-800 ring-1 ring-violet-200 transition hover:bg-violet-100"
+                      >
+                        Schedule
+                      </button>
                       <Link
                         href={`/messages?lead_id=${encodeURIComponent(lead.id)}`}
-                        className="inline-flex h-7 w-16 items-center justify-center rounded-md bg-indigo-50 text-xs font-semibold text-indigo-700 ring-1 ring-indigo-200 transition hover:bg-indigo-100"
+                        className="inline-flex h-7 w-16 shrink-0 items-center justify-center rounded-md bg-indigo-50 text-xs font-semibold text-indigo-700 ring-1 ring-indigo-200 transition hover:bg-indigo-100"
                       >
                         SMS
                       </Link>
                       <button
                         disabled={Boolean(callingLeadIds[lead.id]) || !deviceReady || !identity}
                         onClick={() => dialLead(lead)}
-                        className="inline-flex h-7 w-20 items-center justify-center rounded-md bg-blue-50 text-xs font-semibold text-blue-700 ring-1 ring-blue-200 transition hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-50"
+                        className="inline-flex h-7 min-w-20 shrink-0 items-center justify-center rounded-md bg-blue-50 px-1.5 text-xs font-semibold text-blue-700 ring-1 ring-blue-200 transition hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-50"
                       >
                         {callingLeadIds[lead.id]
                           ? <span className="h-3 w-3 animate-spin rounded-full border-2 border-blue-300 border-t-blue-700" />
@@ -847,7 +983,7 @@ export default function LeadsPage() {
                         onClick={() => setLeadPendingDelete(lead)}
                         aria-label={`Delete ${lead.name}`}
                         title="Delete lead"
-                        className="inline-flex h-7 w-7 items-center justify-center rounded-md bg-rose-50 text-rose-600 ring-1 ring-rose-200 transition hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-50"
+                        className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-rose-50 text-rose-600 ring-1 ring-rose-200 transition hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-50"
                       >
                         {deletingLeadIds[lead.id] ? (
                           <span className="h-3 w-3 animate-spin rounded-full border-2 border-rose-300 border-t-rose-700" />
@@ -897,6 +1033,78 @@ export default function LeadsPage() {
           </div>
         )}
       </section>
+
+      {/* Schedule callback modal */}
+      {scheduleLead ? (
+        <div className="fixed inset-0 z-50 flex items-start justify-center bg-slate-900/45 px-4 pt-10 pb-12 sm:items-center sm:pt-8 sm:pb-8">
+          <div className="w-full max-w-2xl rounded-2xl border border-slate-200 bg-white p-7 shadow-2xl">
+            <div className="flex flex-wrap items-start justify-between gap-3 border-b border-slate-100 pb-4">
+              <div className="min-w-0">
+                <h2 className="text-lg font-semibold tracking-tight text-slate-900">Schedule callback</h2>
+                <p className="mt-1 text-sm text-slate-500">
+                  Reminder only — you still use <span className="font-medium text-slate-700">Dial Now</span> when you are ready.
+                </p>
+                <p className="mt-2 truncate text-sm font-medium text-slate-800">{scheduleLead.name}</p>
+                <p className="truncate text-xs text-slate-500">{scheduleLead.phone}</p>
+              </div>
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-indigo-50 text-indigo-600 ring-1 ring-indigo-100">
+                <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+                  <rect x="3" y="4" width="18" height="18" rx="2" />
+                  <path d="M16 2v4M8 2v4M3 10h18" />
+                  <path d="M12 14v3l2 1" />
+                </svg>
+              </div>
+            </div>
+            <div className="mt-5">
+              <label className="mb-2 block text-xs font-semibold uppercase tracking-wide text-slate-500">
+                When to call back <span className="font-normal normal-case text-slate-400">(your device&apos;s local time)</span>
+              </label>
+              <CallbackSchedulePicker idPrefix="leads-callback-modal" value={scheduleAt} onChange={setScheduleAt} />
+            </div>
+            <div className="mt-5 flex flex-col gap-1.5">
+              <label htmlFor="callback-notes" className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                Notes (optional)
+              </label>
+              <textarea
+                id="callback-notes"
+                value={scheduleNotes}
+                onChange={(e) => setScheduleNotes(e.target.value)}
+                rows={3}
+                placeholder="e.g. Demo booked, send deck first…"
+                className="resize-y rounded-xl border border-slate-200 bg-slate-50/50 px-3 py-2.5 text-sm text-slate-900 outline-none transition focus:border-indigo-400 focus:bg-white focus:ring-2 focus:ring-indigo-100"
+              />
+            </div>
+            <div className="mt-6 flex flex-wrap items-center justify-end gap-2 border-t border-slate-100 pt-5">
+              <button
+                type="button"
+                disabled={scheduleSaving || !scheduleLead.callback_at}
+                onClick={() => void clearCallbackSchedule()}
+                className="h-9 rounded-md border border-slate-300 bg-white px-4 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Clear schedule
+              </button>
+              <button
+                type="button"
+                onClick={() => setScheduleLead(null)}
+                className="h-9 rounded-md border border-slate-300 bg-white px-4 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={scheduleSaving}
+                onClick={() => void saveCallbackSchedule()}
+                className="inline-flex h-9 items-center gap-2 rounded-md bg-indigo-600 px-4 text-sm font-semibold text-white transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {scheduleSaving ? (
+                  <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-indigo-200 border-t-white" />
+                ) : null}
+                Save
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {/* Delete Confirmation Modal */}
       {leadPendingDelete || bulkDeletePending ? (
