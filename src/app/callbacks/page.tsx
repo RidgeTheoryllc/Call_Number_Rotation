@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AppShell } from "@/components/app-shell";
 import { CallbackSchedulePicker } from "@/components/callback-schedule-picker";
 import { useTwilioDeviceContext } from "@/components/twilio-device-provider";
@@ -37,6 +37,8 @@ export default function CallbacksPage() {
   const [toast, setToast] = useState<{ tone: "success" | "warn"; message: string } | null>(null);
   const [isMuted, setIsMuted] = useState(false);
   const [callDurationSeconds, setCallDurationSeconds] = useState(0);
+  /** True while POST /api/twilio/call has not yet produced a ringing/in-progress client leg. */
+  const awaitingTwilioClientLegRef = useRef(false);
 
   const {
     identity,
@@ -70,6 +72,17 @@ export default function CallbacksPage() {
     }, 1000);
     return () => clearInterval(timer);
   }, [callStatus]);
+
+  useEffect(() => {
+    if (callStatus === "ringing" || callStatus === "in-progress") {
+      awaitingTwilioClientLegRef.current = false;
+    }
+  }, [callStatus]);
+
+  useEffect(() => {
+    if (callStatus !== "ringing" || !activeLeadCall) return;
+    answerIncomingCall();
+  }, [activeLeadCall, answerIncomingCall, callStatus]);
 
   useEffect(() => {
     if (!toast) return;
@@ -139,11 +152,6 @@ export default function CallbacksPage() {
     return () => clearTimeout(timer);
   }, [userId, workspaceCache, load]);
 
-  useEffect(() => {
-    if (callStatus !== "ringing" || !activeLeadCall) return;
-    answerIncomingCall();
-  }, [activeLeadCall, answerIncomingCall, callStatus]);
-
   const scheduledRows = useMemo(() => {
     const withCb = leads.filter((l) => Boolean(l.callback_at));
     const q = searchQuery.trim().toLowerCase();
@@ -171,6 +179,7 @@ export default function CallbacksPage() {
   const dialLead = useCallback(
     async (lead: LeadRecord) => {
       if (!userId || callingLeadIds[lead.id]) return;
+      awaitingTwilioClientLegRef.current = true;
       setCallingLeadIds((prev) => ({ ...prev, [lead.id]: true }));
       setError("");
       setCallDurationSeconds(0);
@@ -183,6 +192,7 @@ export default function CallbacksPage() {
         });
         const rotateData = await rotateRes.json();
         if (!rotateRes.ok) {
+          awaitingTwilioClientLegRef.current = false;
           setError(rotateData.error ?? "Failed to rotate DID.");
           return;
         }
@@ -199,6 +209,7 @@ export default function CallbacksPage() {
         });
         const callData = await callRes.json();
         if (!callRes.ok) {
+          awaitingTwilioClientLegRef.current = false;
           setError(callData.error ?? "Call failed.");
           return;
         }
@@ -208,6 +219,9 @@ export default function CallbacksPage() {
           body: JSON.stringify({ id: lead.id, user_id: userId, status: "dialed", assigned_did: rotateData.did }),
         });
         await load();
+      } catch {
+        awaitingTwilioClientLegRef.current = false;
+        setError("Call setup failed. Check your connection and try again.");
       } finally {
         setCallingLeadIds((prev) => ({ ...prev, [lead.id]: false }));
       }
@@ -218,6 +232,7 @@ export default function CallbacksPage() {
   useEffect(() => {
     if (callStatus === "ringing" || callStatus === "in-progress") return;
     if (activeCall) return;
+    if (awaitingTwilioClientLegRef.current) return;
     window.setTimeout(() => {
       setActiveLeadCall(null);
       setCallDurationSeconds(0);

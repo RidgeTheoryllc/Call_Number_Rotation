@@ -99,6 +99,8 @@ export default function LeadsPage() {
   const [activeLeadCall, setActiveLeadCall] = useState<{ name: string; phone: string } | null>(null);
   const [autoDialEnabled, setAutoDialEnabled] = useState(false);
   const autoDialLockRef = useRef(false);
+  /** True while POST /api/twilio/call has not yet produced a ringing/in-progress client leg. */
+  const awaitingTwilioClientLegRef = useRef(false);
   const latestInboundLogIdRef = useRef<string | null>(null);
   const [scheduleLead, setScheduleLead] = useState<LeadRecord | null>(null);
   const [scheduleAt, setScheduleAt] = useState("");
@@ -194,6 +196,12 @@ export default function LeadsPage() {
       setCallDurationSeconds((prev) => prev + 1);
     }, 1000);
     return () => window.clearInterval(timer);
+  }, [callStatus]);
+
+  useEffect(() => {
+    if (callStatus === "ringing" || callStatus === "in-progress") {
+      awaitingTwilioClientLegRef.current = false;
+    }
   }, [callStatus]);
 
   useEffect(() => {
@@ -442,7 +450,8 @@ export default function LeadsPage() {
   };
 
   const dialLead = useCallback(async (lead: LeadRecord) => {
-    if (callingLeadIds[lead.id]) return;
+    if (!userId || callingLeadIds[lead.id]) return;
+    awaitingTwilioClientLegRef.current = true;
     setCallingLeadIds((prev) => ({ ...prev, [lead.id]: true }));
     setError("");
     setCallDurationSeconds(0);
@@ -454,7 +463,12 @@ export default function LeadsPage() {
         body: JSON.stringify({ leadPhone: lead.phone, user_id: userId }),
       });
       const rotateData = await rotateRes.json();
-      if (!rotateRes.ok) { setError(rotateData.error ?? "Failed to rotate DID."); setAutoDialEnabled(false); return; }
+      if (!rotateRes.ok) {
+        awaitingTwilioClientLegRef.current = false;
+        setError(rotateData.error ?? "Failed to rotate DID.");
+        setAutoDialEnabled(false);
+        return;
+      }
 
       const callRes = await fetch("/api/twilio/call", {
         method: "POST",
@@ -462,7 +476,12 @@ export default function LeadsPage() {
         body: JSON.stringify({ to: lead.phone, callerId: rotateData.did, agentIdentity: identity, leadId: lead.id, user_id: userId }),
       });
       const callData = await callRes.json();
-      if (!callRes.ok) { setError(callData.error ?? "Call failed."); setAutoDialEnabled(false); return; }
+      if (!callRes.ok) {
+        awaitingTwilioClientLegRef.current = false;
+        setError(callData.error ?? "Call failed.");
+        setAutoDialEnabled(false);
+        return;
+      }
 
       await fetch("/api/leads", {
         method: "PATCH",
@@ -471,6 +490,9 @@ export default function LeadsPage() {
       });
       await load();
       setCurrentPage(1);
+    } catch {
+      awaitingTwilioClientLegRef.current = false;
+      setError("Call setup failed. Check your connection and try again.");
     } finally {
       setCallingLeadIds((prev) => ({ ...prev, [lead.id]: false }));
     }
@@ -479,6 +501,7 @@ export default function LeadsPage() {
   useEffect(() => {
     if (callStatus === "ringing" || callStatus === "in-progress") return;
     if (activeCall) return;
+    if (awaitingTwilioClientLegRef.current) return;
     window.setTimeout(() => {
       setActiveLeadCall(null);
     }, 0);
