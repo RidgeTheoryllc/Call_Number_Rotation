@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Call, Device } from "@twilio/voice-sdk";
 
 type TwilioCallStatus = "idle" | "registering" | "ready" | "ringing" | "in-progress" | "completed" | "error";
@@ -12,6 +12,8 @@ export function useTwilioDevice(identityHint?: string) {
   const [activeCall, setActiveCall] = useState<Call | null>(null);
   const [callStatus, setCallStatus] = useState<TwilioCallStatus>("idle");
   const [deviceError, setDeviceError] = useState<string>("");
+  /** Prevents double `accept()` (Strict Mode / duplicate effects), which drops the call immediately. */
+  const acceptedIncomingCallRef = useRef<Call | null>(null);
 
   const resolvedIdentity = useMemo(() => {
     if (identityHint?.trim()) return identityHint.trim();
@@ -67,28 +69,24 @@ export function useTwilioDevice(identityHint?: string) {
             setCallStatus("in-progress");
           });
 
-          incomingCall.on("disconnect", () => {
+          const backToReady = () => {
             if (isCancelled) return;
             setActiveCall(null);
-            setCallStatus("completed");
-          });
+            // Stay on "ready" so the next outbound leg can ring; "completed" left stale breaks page logic.
+            setCallStatus("ready");
+          };
 
-          incomingCall.on("cancel", () => {
-            if (isCancelled) return;
-            setActiveCall(null);
-            setCallStatus("completed");
-          });
+          incomingCall.on("disconnect", backToReady);
 
-          incomingCall.on("reject", () => {
-            if (isCancelled) return;
-            setActiveCall(null);
-            setCallStatus("completed");
-          });
+          incomingCall.on("cancel", backToReady);
+
+          incomingCall.on("reject", backToReady);
 
           incomingCall.on("error", (error: Error) => {
             if (isCancelled) return;
             setDeviceError(error.message);
             setCallStatus("error");
+            setActiveCall(null);
           });
         });
 
@@ -133,6 +131,12 @@ export function useTwilioDevice(identityHint?: string) {
     };
   }, [resolvedIdentity]);
 
+  useEffect(() => {
+    if (!activeCall) {
+      acceptedIncomingCallRef.current = null;
+    }
+  }, [activeCall]);
+
   const hangup = useCallback(() => {
     if (activeCall) {
       activeCall.disconnect();
@@ -143,6 +147,8 @@ export function useTwilioDevice(identityHint?: string) {
 
   const answerIncomingCall = useCallback(() => {
     if (!activeCall || callStatus !== "ringing") return;
+    if (acceptedIncomingCallRef.current === activeCall) return;
+    acceptedIncomingCallRef.current = activeCall;
     activeCall.accept();
   }, [activeCall, callStatus]);
 
