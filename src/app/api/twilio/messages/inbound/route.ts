@@ -40,22 +40,26 @@ export async function POST(req: NextRequest) {
     const form = await req.formData();
     const from = normalizePhone(String(form.get("From") ?? ""));
     const to = normalizePhone(String(form.get("To") ?? ""));
-    const body = String(form.get("Body") ?? "").trim();
+    const bodyRaw = String(form.get("Body") ?? "").trim();
+    const numMedia = Number.parseInt(String(form.get("NumMedia") ?? "0"), 10) || 0;
+    const body =
+      bodyRaw || (numMedia > 0 ? "[Media received]" : "(no message text)");
     const messageSid = String(form.get("MessageSid") ?? form.get("SmsSid") ?? "").trim();
 
-    if (!from || !to || !body) {
+    if (!from || !to) {
       response.message("We could not process your message. Please try again later.");
       return new NextResponse(response.toString(), { headers: { "Content-Type": "text/xml" } });
     }
 
     const userId = await resolveUserIdFromDid(to);
     if (!userId) {
+      console.warn("[twilio/messages/inbound] no did_pool match for To=", to);
       response.message("This number is not currently monitored.");
       return new NextResponse(response.toString(), { headers: { "Content-Type": "text/xml" } });
     }
 
     const supabase = getSupabaseServerClient();
-    const normalizedKeyword = body.trim().toUpperCase();
+    const normalizedKeyword = bodyRaw.trim().toUpperCase();
     if (STOP_KEYWORDS.has(normalizedKeyword)) {
       await supabase.from("message_opt_outs").upsert(
         {
@@ -76,7 +80,9 @@ export async function POST(req: NextRequest) {
       .from("leads")
       .select("id, name, phone")
       .eq("user_id", userId);
-    if (leadsError) throw leadsError;
+    if (leadsError) {
+      console.error("[twilio/messages/inbound] leads lookup failed (inbound still logged)", leadsError);
+    }
 
     const matchedLead = (leads ?? []).find((lead) => normalizePhone(String(lead.phone ?? "")) === from);
     const messagePayload = {
