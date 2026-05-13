@@ -2,6 +2,7 @@
 
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { AppShell } from "@/components/app-shell";
+import { useWorkspaceDataCache } from "@/components/workspace-data-cache";
 import { Badge } from "@/components/ui";
 import { getDidWarmupCap } from "@/lib/did-engine";
 import { getSupabaseBrowserClient } from "@/lib/supabase";
@@ -54,6 +55,7 @@ export default function DidPoolPage() {
   const [configureSummary, setConfigureSummary] = useState<ConfigureSummary | null>(null);
   const [messagingConfigureSummary, setMessagingConfigureSummary] = useState<MessagingConfigureSummary | null>(null);
   const supabase = getSupabaseBrowserClient();
+  const workspaceCache = useWorkspaceDataCache();
 
   const load = useCallback(async () => {
     if (!userId) {
@@ -66,15 +68,27 @@ export default function DidPoolPage() {
     try {
       const res = await fetch(`/api/did-pool?user_id=${encodeURIComponent(userId)}`);
       const json = await res.json();
-      if (res.ok) setDids(json);
+      let nextDids: DidRecord[] = [];
+      if (res.ok) {
+        nextDids = json as DidRecord[];
+        setDids(nextDids);
+      }
 
       const prefRes = await fetch(`/api/user/messaging-default?user_id=${encodeURIComponent(userId)}`);
       const prefJson = await prefRes.json();
-      if (prefRes.ok) setDefaultMessagingDid(prefJson.default_messaging_did ?? null);
+      let nextDefault: string | null = null;
+      if (prefRes.ok) {
+        nextDefault = prefJson.default_messaging_did ?? null;
+        setDefaultMessagingDid(nextDefault);
+      }
+
+      if (res.ok) {
+        workspaceCache.setCachedDidPool(userId, { dids: nextDids, defaultMessagingDid: nextDefault });
+      }
     } finally {
       setIsLoading(false);
     }
-  }, [userId]);
+  }, [userId, workspaceCache]);
 
   useEffect(() => {
     const bootstrap = async () => {
@@ -96,11 +110,21 @@ export default function DidPoolPage() {
   }, [supabase]);
 
   useEffect(() => {
+    if (!userId) return;
+    const cached = workspaceCache.getCachedDidPool(userId);
+    if (cached !== null) {
+      queueMicrotask(() => {
+        setDids(cached.dids);
+        setDefaultMessagingDid(cached.defaultMessagingDid);
+        setIsLoading(false);
+      });
+      return;
+    }
     const timer = setTimeout(() => {
       void load();
     }, 0);
     return () => clearTimeout(timer);
-  }, [load]);
+  }, [userId, workspaceCache, load]);
 
   const onAdd = async (e: FormEvent) => {
     e.preventDefault();
@@ -213,7 +237,9 @@ export default function DidPoolPage() {
         setError(json.error ?? "Failed to update SMS default.");
         return;
       }
-      setDefaultMessagingDid(json.default_messaging_did ?? null);
+      const next = json.default_messaging_did ?? null;
+      setDefaultMessagingDid(next);
+      workspaceCache.setCachedDidPool(userId, { dids, defaultMessagingDid: next });
     } finally {
       setSmsDefaultSavingId(null);
     }

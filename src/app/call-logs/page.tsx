@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { AppShell } from "@/components/app-shell";
+import { useWorkspaceDataCache } from "@/components/workspace-data-cache";
 import { getSupabaseBrowserClient } from "@/lib/supabase";
 import type { CallLogRecord } from "@/types";
 
@@ -12,10 +13,11 @@ export default function CallLogsPage() {
   const [noteDrafts, setNoteDrafts] = useState<Record<string, string>>({});
   const [savingNoteIds, setSavingNoteIds] = useState<Record<string, boolean>>({});
   const supabase = useMemo(() => getSupabaseBrowserClient(), []);
+  const workspaceCache = useWorkspaceDataCache();
 
   const loadLogs = useCallback(
     async (resolvedUserId?: string | null) => {
-      let activeUserId = resolvedUserId ?? userId;
+      let activeUserId = resolvedUserId;
       if (!activeUserId) {
         const {
           data: { user },
@@ -35,18 +37,20 @@ export default function CallLogsPage() {
       if (res.ok) {
         const nextLogs = json as CallLogRecord[];
         setLogs(nextLogs);
+        workspaceCache.setCachedCallLogs(activeUserId, nextLogs);
         setNoteDrafts((prev) => {
           const merged = { ...prev };
-          nextLogs.forEach((log) => {
-            if (merged[log.id] == null) merged[log.id] = log.call_notes ?? "";
+          nextLogs.forEach((logRow) => {
+            if (merged[logRow.id] == null) merged[logRow.id] = logRow.call_notes ?? "";
           });
           return merged;
         });
+        setError("");
       } else {
         setError(json.error ?? "Failed to load call logs.");
       }
     },
-    [supabase, userId],
+    [supabase, workspaceCache],
   );
 
   const formatDuration = (value: number | null) => {
@@ -69,17 +73,49 @@ export default function CallLogsPage() {
   };
 
   useEffect(() => {
-    const initialLoadTimer = window.setTimeout(() => {
-      void loadLogs();
-    }, 0);
-    const intervalId = window.setInterval(() => {
-      void loadLogs();
-    }, 10000);
-    return () => {
-      window.clearTimeout(initialLoadTimer);
-      window.clearInterval(intervalId);
+    const bootstrap = async () => {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user?.id) {
+        setError("You must be signed in to view call logs.");
+        setLogs([]);
+        return;
+      }
+      setUserId(user.id);
     };
-  }, [loadLogs]);
+    void bootstrap();
+  }, [supabase]);
+
+  useEffect(() => {
+    if (!userId) return;
+    const cached = workspaceCache.getCachedCallLogs(userId);
+    if (cached !== null) {
+      queueMicrotask(() => {
+        setLogs(cached);
+        setNoteDrafts((prev) => {
+          const merged = { ...prev };
+          cached.forEach((logRow) => {
+            if (merged[logRow.id] == null) merged[logRow.id] = logRow.call_notes ?? "";
+          });
+          return merged;
+        });
+      });
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      void loadLogs(userId);
+    }, 0);
+    return () => clearTimeout(timer);
+  }, [userId, workspaceCache, loadLogs]);
+
+  useEffect(() => {
+    if (!userId) return;
+    const intervalId = window.setInterval(() => {
+      void loadLogs(userId);
+    }, 10000);
+    return () => window.clearInterval(intervalId);
+  }, [userId, loadLogs]);
 
   const saveCallNote = async (log: CallLogRecord) => {
     if (savingNoteIds[log.id]) return;
@@ -115,9 +151,11 @@ export default function CallLogsPage() {
         return;
       }
 
-      setLogs((prev) =>
-        prev.map((item) => (item.id === log.id ? { ...item, call_notes: nextNote } : item)),
-      );
+      setLogs((prev) => {
+        const next = prev.map((item) => (item.id === log.id ? { ...item, call_notes: nextNote } : item));
+        queueMicrotask(() => workspaceCache.setCachedCallLogs(resolvedUserId, next));
+        return next;
+      });
     } finally {
       setSavingNoteIds((prev) => ({ ...prev, [log.id]: false }));
     }

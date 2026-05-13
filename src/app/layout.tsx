@@ -1,5 +1,7 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
+import { TwilioDeviceProvider } from "@/components/twilio-device-provider";
+import { WorkspaceDataCacheProvider } from "@/components/workspace-data-cache";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -28,7 +30,9 @@ export default function RootLayout({
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
       <body className="min-h-full flex flex-col bg-slate-50 text-slate-900">
-        {children}
+        <TwilioDeviceProvider>
+          <WorkspaceDataCacheProvider>{children}</WorkspaceDataCacheProvider>
+        </TwilioDeviceProvider>
       </body>
     </html>
   );

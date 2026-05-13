@@ -5,7 +5,8 @@ import Link from "next/link";
 import Papa from "papaparse";
 import { AppShell } from "@/components/app-shell";
 import type { LeadRecord } from "@/types";
-import { useTwilioDevice } from "@/hooks/useTwilioDevice";
+import { useTwilioDeviceContext } from "@/components/twilio-device-provider";
+import { useWorkspaceDataCache } from "@/components/workspace-data-cache";
 import { getSupabaseBrowserClient } from "@/lib/supabase";
 
 function sortLeadsByPriority(rows: LeadRecord[]): LeadRecord[] {
@@ -80,7 +81,6 @@ export default function LeadsPage() {
   const [isMuted, setIsMuted] = useState(false);
   const [callDurationSeconds, setCallDurationSeconds] = useState(0);
   const [activeLeadCall, setActiveLeadCall] = useState<{ name: string; phone: string } | null>(null);
-  const [twilioIdentityHint, setTwilioIdentityHint] = useState("");
   const [autoDialEnabled, setAutoDialEnabled] = useState(false);
   const autoDialLockRef = useRef(false);
   const latestInboundLogIdRef = useRef<string | null>(null);
@@ -94,7 +94,8 @@ export default function LeadsPage() {
     answerIncomingCall,
     rejectIncomingCall,
     mute,
-  } = useTwilioDevice(twilioIdentityHint);
+  } = useTwilioDeviceContext();
+  const workspaceCache = useWorkspaceDataCache();
   const showCallControls = callStatus === "ringing" || callStatus === "in-progress";
   const incomingCaller = callStatus === "ringing" ? activeCall?.parameters.From ?? activeCall?.parameters.Caller : null;
   const LEADS_PER_PAGE = 10;
@@ -134,7 +135,13 @@ export default function LeadsPage() {
             .join(" ")
             .toLowerCase();
 
-          return searchable.includes(query);
+          const queryDigits = query.replace(/\D/g, "");
+          const leadDigits = (lead.phone ?? "").replace(/\D/g, "");
+          const phoneDigitsMatch =
+            queryDigits.length >= 3 &&
+            (leadDigits.includes(queryDigits) || leadDigits.endsWith(queryDigits));
+
+          return searchable.includes(query) || phoneDigitsMatch;
         })
       : leads;
 
@@ -170,11 +177,15 @@ export default function LeadsPage() {
     try {
       const res = await fetch(`/api/leads?user_id=${encodeURIComponent(userId)}`);
       const json = await res.json();
-      if (res.ok) setLeads(sortLeadsByPriority(json as LeadRecord[]));
+      if (res.ok) {
+        const rows = sortLeadsByPriority(json as LeadRecord[]);
+        setLeads(rows);
+        workspaceCache.setCachedLeads(userId, rows);
+      }
     } finally {
       setIsLoading(false);
     }
-  }, [userId]);
+  }, [userId, workspaceCache]);
 
   const checkInboundCallbacks = useCallback(async () => {
     if (!userId) return;
@@ -208,15 +219,25 @@ export default function LeadsPage() {
         return;
       }
       setUserId(user.id);
-      setTwilioIdentityHint(`agent-${user.id}`);
     };
     void bootstrap();
   }, [supabase]);
 
   useEffect(() => {
-    const timer = setTimeout(() => { void load(); }, 0);
+    if (!userId) return;
+    const cached = workspaceCache.getCachedLeads(userId);
+    if (cached !== null) {
+      queueMicrotask(() => {
+        setLeads(cached);
+        setIsLoading(false);
+      });
+      return;
+    }
+    const timer = setTimeout(() => {
+      void load();
+    }, 0);
     return () => clearTimeout(timer);
-  }, [load]);
+  }, [userId, workspaceCache, load]);
 
   useEffect(() => {
     const initialTimer = window.setTimeout(() => {
@@ -674,7 +695,7 @@ export default function LeadsPage() {
                   setSearchQuery(e.target.value);
                   setCurrentPage(1);
                 }}
-                placeholder="Search name, phone, status, DID, or result"
+                placeholder="Search name, phone (any format), status, DID, or result"
                 className="h-9 w-full rounded-md border border-slate-300 px-3 pr-16 text-sm text-slate-900 placeholder:text-slate-400 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-200"
               />
               {hasActiveSearch ? (

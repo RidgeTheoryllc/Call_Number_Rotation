@@ -107,6 +107,7 @@ export default function MessagesPage() {
   const [selectedConversationId, setSelectedConversationId] = useState<string | null>(null);
   const [selectedLeadId, setSelectedLeadId] = useState("");
   const [isLeadPickerOpen, setIsLeadPickerOpen] = useState(false);
+  const [leadPickerSearch, setLeadPickerSearch] = useState("");
   const [draftMessage, setDraftMessage] = useState("");
   const [error, setError] = useState("");
   const [isLoading, setIsLoading] = useState(true);
@@ -121,13 +122,35 @@ export default function MessagesPage() {
     const query = searchQuery.trim().toLowerCase();
     if (!query) return conversations;
 
-    return conversations.filter((conversation) =>
-      [conversation.leadName, conversation.phone, conversation.did, conversation.lastMessage]
+    const queryDigits = query.replace(/\D/g, "");
+    return conversations.filter((conversation) => {
+      const haystack = [conversation.leadName, conversation.phone, conversation.did, conversation.lastMessage]
         .join(" ")
-        .toLowerCase()
-        .includes(query),
-    );
+        .toLowerCase();
+      const phoneDigits = conversation.phone.replace(/\D/g, "");
+      const phoneDigitsMatch =
+        queryDigits.length >= 3 &&
+        (phoneDigits.includes(queryDigits) || phoneDigits.endsWith(queryDigits));
+      return haystack.includes(query) || phoneDigitsMatch;
+    });
   }, [conversations, searchQuery]);
+
+  const filteredLeadsForPicker = useMemo(() => {
+    const q = leadPickerSearch.trim().toLowerCase();
+    if (!q) return leads;
+    const queryDigits = q.replace(/\D/g, "");
+    return leads.filter((lead) => {
+      const haystack = [lead.name, lead.phone, lead.area_code, lead.assigned_did, lead.status, lead.result]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
+      const leadDigits = (lead.phone ?? "").replace(/\D/g, "");
+      const phoneDigitsMatch =
+        queryDigits.length >= 3 &&
+        (leadDigits.includes(queryDigits) || leadDigits.endsWith(queryDigits));
+      return haystack.includes(q) || phoneDigitsMatch;
+    });
+  }, [leads, leadPickerSearch]);
 
   const selectedLead = leads.find((lead) => lead.id === selectedLeadId) ?? null;
   const matchingLeadConversation = selectedLead
@@ -318,7 +341,10 @@ export default function MessagesPage() {
                 </span>
                 <button
                   type="button"
-                  onClick={() => setIsLeadPickerOpen((prev) => !prev)}
+                  onClick={() => {
+                    if (isLeadPickerOpen) setLeadPickerSearch("");
+                    setIsLeadPickerOpen((prev) => !prev);
+                  }}
                   disabled={leads.length === 0}
                   className="flex h-11 w-full items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-3 text-left text-sm text-slate-900 outline-none transition hover:border-indigo-200 hover:bg-slate-50 focus:border-indigo-200 focus:ring-2 focus:ring-indigo-100 disabled:cursor-not-allowed disabled:opacity-60"
                 >
@@ -346,12 +372,25 @@ export default function MessagesPage() {
 
                 {isLeadPickerOpen ? (
                   <div className="absolute left-0 right-0 top-full z-30 mt-2 max-h-72 overflow-y-auto rounded-2xl border border-slate-200 bg-white p-2 shadow-xl">
+                    <label htmlFor="lead-picker-search" className="sr-only">
+                      Search leads by name or phone
+                    </label>
+                    <input
+                      id="lead-picker-search"
+                      type="search"
+                      value={leadPickerSearch}
+                      onChange={(e) => setLeadPickerSearch(e.target.value)}
+                      placeholder="Search by name or phone…"
+                      className="mb-2 h-9 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 text-sm text-slate-900 outline-none placeholder:text-slate-400 focus:border-indigo-200 focus:bg-white focus:ring-2 focus:ring-indigo-100"
+                      autoFocus
+                    />
                     <button
                       type="button"
                       onClick={() => {
                         setSelectedLeadId("");
                         setSelectedConversationId(null);
                         setDraftMessage("");
+                        setLeadPickerSearch("");
                         setIsLeadPickerOpen(false);
                       }}
                       className="flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-sm text-slate-500 transition hover:bg-slate-50"
@@ -361,7 +400,7 @@ export default function MessagesPage() {
                       </span>
                       <span>Choose a lead</span>
                     </button>
-                    {leads.map((lead) => (
+                    {filteredLeadsForPicker.map((lead) => (
                       <button
                         key={lead.id}
                         type="button"
@@ -369,6 +408,7 @@ export default function MessagesPage() {
                           setSelectedLeadId(lead.id);
                           setSelectedConversationId(null);
                           setDraftMessage("");
+                          setLeadPickerSearch("");
                           setIsLeadPickerOpen(false);
                         }}
                         className={`flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left transition ${
@@ -389,6 +429,9 @@ export default function MessagesPage() {
                         ) : null}
                       </button>
                     ))}
+                    {filteredLeadsForPicker.length === 0 && leadPickerSearch.trim() ? (
+                      <p className="px-3 py-3 text-center text-sm text-slate-500">No leads match that name or phone.</p>
+                    ) : null}
                   </div>
                 ) : null}
               </div>
@@ -493,23 +536,30 @@ export default function MessagesPage() {
                     selectedConversation.messages.map((message) => {
                       const isOutbound = message.direction === "outbound";
 
+                      if (isOutbound) {
+                        return (
+                          <div key={message.id} className="flex justify-end">
+                            <div className="w-fit max-w-[78%] min-w-0">
+                              <div className="rounded-2xl rounded-br-md bg-indigo-600 px-4 py-2.5 text-left text-sm text-white shadow-sm">
+                                {message.body}
+                              </div>
+                              <div className="mt-1 flex items-center gap-2 justify-end text-[11px]">
+                                <span className="text-slate-400">{formatMessageTime(message.timestamp)}</span>
+                                <span className={getStatusTone(message.status)}>{message.status}</span>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      }
+
                       return (
-                        <div key={message.id} className={`flex ${isOutbound ? "justify-end" : "justify-start"}`}>
-                          <div className={`max-w-[78%] ${isOutbound ? "text-right" : "text-left"}`}>
-                            <div
-                              className={`rounded-2xl px-4 py-2.5 text-sm shadow-sm ${
-                                isOutbound
-                                  ? "rounded-br-md bg-indigo-600 text-white"
-                                  : "rounded-bl-md bg-white text-slate-800 ring-1 ring-slate-200"
-                              }`}
-                            >
+                        <div key={message.id} className="flex justify-start">
+                          <div className="max-w-[78%] text-left">
+                            <div className="rounded-2xl rounded-bl-md bg-white px-4 py-2.5 text-sm text-slate-800 shadow-sm ring-1 ring-slate-200">
                               {message.body}
                             </div>
-                            <div className={`mt-1 flex items-center gap-2 text-[11px] ${isOutbound ? "justify-end" : "justify-start"}`}>
+                            <div className="mt-1 flex items-center gap-2 justify-start text-[11px]">
                               <span className="text-slate-400">{formatMessageTime(message.timestamp)}</span>
-                              {isOutbound ? (
-                                <span className={getStatusTone(message.status)}>{message.status}</span>
-                              ) : null}
                             </div>
                           </div>
                         </div>
