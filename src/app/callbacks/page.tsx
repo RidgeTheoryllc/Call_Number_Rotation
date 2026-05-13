@@ -29,7 +29,6 @@ export default function CallbacksPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [todayOnly, setTodayOnly] = useState(false);
   const [callingLeadIds, setCallingLeadIds] = useState<Record<string, boolean>>({});
-  const [activeLeadCall, setActiveLeadCall] = useState<{ name: string; phone: string } | null>(null);
   const [scheduleLead, setScheduleLead] = useState<LeadRecord | null>(null);
   const [scheduleAt, setScheduleAt] = useState("");
   const [scheduleNotes, setScheduleNotes] = useState("");
@@ -49,6 +48,8 @@ export default function CallbacksPage() {
     answerIncomingCall,
     rejectIncomingCall,
     mute,
+    signalOutboundClientLegExpected,
+    clearOutboundClientLegExpected,
   } = useTwilioDeviceContext();
   const workspaceCache = useWorkspaceDataCache();
   const showCallControls = callStatus === "ringing" || callStatus === "in-progress";
@@ -78,11 +79,6 @@ export default function CallbacksPage() {
       awaitingTwilioClientLegRef.current = false;
     }
   }, [callStatus]);
-
-  useEffect(() => {
-    if (callStatus !== "ringing" || !activeLeadCall) return;
-    answerIncomingCall();
-  }, [activeLeadCall, answerIncomingCall, callStatus]);
 
   useEffect(() => {
     if (!toast) return;
@@ -179,11 +175,11 @@ export default function CallbacksPage() {
   const dialLead = useCallback(
     async (lead: LeadRecord) => {
       if (!userId || callingLeadIds[lead.id]) return;
+      signalOutboundClientLegExpected();
       awaitingTwilioClientLegRef.current = true;
       setCallingLeadIds((prev) => ({ ...prev, [lead.id]: true }));
       setError("");
       setCallDurationSeconds(0);
-      setActiveLeadCall({ name: lead.name, phone: lead.phone });
       try {
         const rotateRes = await fetch("/api/rotate-did", {
           method: "POST",
@@ -192,6 +188,7 @@ export default function CallbacksPage() {
         });
         const rotateData = await rotateRes.json();
         if (!rotateRes.ok) {
+          clearOutboundClientLegExpected();
           awaitingTwilioClientLegRef.current = false;
           setError(rotateData.error ?? "Failed to rotate DID.");
           return;
@@ -209,6 +206,7 @@ export default function CallbacksPage() {
         });
         const callData = await callRes.json();
         if (!callRes.ok) {
+          clearOutboundClientLegExpected();
           awaitingTwilioClientLegRef.current = false;
           setError(callData.error ?? "Call failed.");
           return;
@@ -220,13 +218,14 @@ export default function CallbacksPage() {
         });
         await load();
       } catch {
+        clearOutboundClientLegExpected();
         awaitingTwilioClientLegRef.current = false;
         setError("Call setup failed. Check your connection and try again.");
       } finally {
         setCallingLeadIds((prev) => ({ ...prev, [lead.id]: false }));
       }
     },
-    [callingLeadIds, identity, load, userId],
+    [callingLeadIds, clearOutboundClientLegExpected, identity, load, signalOutboundClientLegExpected, userId],
   );
 
   useEffect(() => {
@@ -234,7 +233,6 @@ export default function CallbacksPage() {
     if (activeCall) return;
     if (awaitingTwilioClientLegRef.current) return;
     window.setTimeout(() => {
-      setActiveLeadCall(null);
       setCallDurationSeconds(0);
       setIsMuted(false);
     }, 0);

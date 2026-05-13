@@ -14,6 +14,8 @@ export function useTwilioDevice(identityHint?: string) {
   const [deviceError, setDeviceError] = useState<string>("");
   /** Prevents double `accept()` (Strict Mode / duplicate effects), which drops the call immediately. */
   const acceptedIncomingCallRef = useRef<Call | null>(null);
+  /** When > Date.now(), the next incoming client leg is auto-accepted as click-to-call (PSTN inbound leaves this cleared). */
+  const outboundClientLegExpectUntilMsRef = useRef(0);
 
   const resolvedIdentity = useMemo(() => {
     if (identityHint?.trim()) return identityHint.trim();
@@ -88,6 +90,15 @@ export function useTwilioDevice(identityHint?: string) {
             setCallStatus("error");
             setActiveCall(null);
           });
+
+          const expectUntil = outboundClientLegExpectUntilMsRef.current;
+          if (expectUntil > 0 && Date.now() < expectUntil) {
+            outboundClientLegExpectUntilMsRef.current = 0;
+            if (acceptedIncomingCallRef.current !== incomingCall) {
+              acceptedIncomingCallRef.current = incomingCall;
+              incomingCall.accept();
+            }
+          }
         });
 
         mountedDevice.on("error", (error: Error) => {
@@ -162,6 +173,14 @@ export function useTwilioDevice(identityHint?: string) {
     activeCall.mute(muted);
   }, [activeCall]);
 
+  const signalOutboundClientLegExpected = useCallback(() => {
+    outboundClientLegExpectUntilMsRef.current = Date.now() + 25_000;
+  }, []);
+
+  const clearOutboundClientLegExpected = useCallback(() => {
+    outboundClientLegExpectUntilMsRef.current = 0;
+  }, []);
+
   return {
     device,
     identity,
@@ -173,5 +192,7 @@ export function useTwilioDevice(identityHint?: string) {
     answerIncomingCall,
     rejectIncomingCall,
     mute,
+    signalOutboundClientLegExpected,
+    clearOutboundClientLegExpected,
   };
 }

@@ -116,6 +116,8 @@ export default function LeadsPage() {
     answerIncomingCall,
     rejectIncomingCall,
     mute,
+    signalOutboundClientLegExpected,
+    clearOutboundClientLegExpected,
   } = useTwilioDeviceContext();
   const workspaceCache = useWorkspaceDataCache();
   const showCallControls = callStatus === "ringing" || callStatus === "in-progress";
@@ -203,11 +205,6 @@ export default function LeadsPage() {
       awaitingTwilioClientLegRef.current = false;
     }
   }, [callStatus]);
-
-  useEffect(() => {
-    if (callStatus !== "ringing" || !activeLeadCall) return;
-    answerIncomingCall();
-  }, [activeLeadCall, answerIncomingCall, callStatus]);
 
   const load = useCallback(async () => {
     if (!userId) {
@@ -451,6 +448,7 @@ export default function LeadsPage() {
 
   const dialLead = useCallback(async (lead: LeadRecord) => {
     if (!userId || callingLeadIds[lead.id]) return;
+    signalOutboundClientLegExpected();
     awaitingTwilioClientLegRef.current = true;
     setCallingLeadIds((prev) => ({ ...prev, [lead.id]: true }));
     setError("");
@@ -464,6 +462,7 @@ export default function LeadsPage() {
       });
       const rotateData = await rotateRes.json();
       if (!rotateRes.ok) {
+        clearOutboundClientLegExpected();
         awaitingTwilioClientLegRef.current = false;
         setError(rotateData.error ?? "Failed to rotate DID.");
         setAutoDialEnabled(false);
@@ -477,6 +476,7 @@ export default function LeadsPage() {
       });
       const callData = await callRes.json();
       if (!callRes.ok) {
+        clearOutboundClientLegExpected();
         awaitingTwilioClientLegRef.current = false;
         setError(callData.error ?? "Call failed.");
         setAutoDialEnabled(false);
@@ -491,12 +491,13 @@ export default function LeadsPage() {
       await load();
       setCurrentPage(1);
     } catch {
+      clearOutboundClientLegExpected();
       awaitingTwilioClientLegRef.current = false;
       setError("Call setup failed. Check your connection and try again.");
     } finally {
       setCallingLeadIds((prev) => ({ ...prev, [lead.id]: false }));
     }
-  }, [callingLeadIds, identity, load, userId]);
+  }, [callingLeadIds, clearOutboundClientLegExpected, identity, load, signalOutboundClientLegExpected, userId]);
 
   useEffect(() => {
     if (callStatus === "ringing" || callStatus === "in-progress") return;
