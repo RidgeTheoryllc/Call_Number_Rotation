@@ -5,6 +5,7 @@ import { AppShell } from "@/components/app-shell";
 import { Badge } from "@/components/ui";
 import { getDidWarmupCap } from "@/lib/did-engine";
 import { getSupabaseBrowserClient } from "@/lib/supabase";
+import { normalizePhone } from "@/lib/utils";
 import type { DidRecord } from "@/types";
 
 type ConfigureResult = {
@@ -30,6 +31,8 @@ export default function DidPoolPage() {
   const [error, setError] = useState("");
   const [isLoading, setIsLoading] = useState(true);
   const [userId, setUserId] = useState<string | null>(null);
+  const [defaultMessagingDid, setDefaultMessagingDid] = useState<string | null>(null);
+  const [smsDefaultSavingId, setSmsDefaultSavingId] = useState<string | null>(null);
   const [deletingDidIds, setDeletingDidIds] = useState<Record<string, boolean>>({});
   const [didPendingDelete, setDidPendingDelete] = useState<DidRecord | null>(null);
   const [isConfiguring, setIsConfiguring] = useState(false);
@@ -48,6 +51,10 @@ export default function DidPoolPage() {
       const res = await fetch(`/api/did-pool?user_id=${encodeURIComponent(userId)}`);
       const json = await res.json();
       if (res.ok) setDids(json);
+
+      const prefRes = await fetch(`/api/user/messaging-default?user_id=${encodeURIComponent(userId)}`);
+      const prefJson = await prefRes.json();
+      if (prefRes.ok) setDefaultMessagingDid(prefJson.default_messaging_did ?? null);
     } finally {
       setIsLoading(false);
     }
@@ -142,6 +149,33 @@ export default function DidPoolPage() {
     }
   };
 
+  const setMessagingDefaultDid = async (didValue: string | null, busyKey: string) => {
+    if (!userId) {
+      setError("You must be signed in to set SMS default.");
+      return;
+    }
+    setError("");
+    setSmsDefaultSavingId(busyKey);
+    try {
+      const res = await fetch("/api/user/messaging-default", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          user_id: userId,
+          default_messaging_did: didValue,
+        }),
+      });
+      const json = await res.json();
+      if (!res.ok) {
+        setError(json.error ?? "Failed to update SMS default.");
+        return;
+      }
+      setDefaultMessagingDid(json.default_messaging_did ?? null);
+    } finally {
+      setSmsDefaultSavingId(null);
+    }
+  };
+
   const deleteDid = async (id: string) => {
     setError("");
 
@@ -187,7 +221,9 @@ export default function DidPoolPage() {
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <h1 className="text-3xl font-semibold tracking-tight text-slate-900">DID Pool Management</h1>
-            <p className="mt-1 text-sm text-slate-500">Per-number rotation health and suppression controls.</p>
+            <p className="mt-1 text-sm text-slate-500">
+              Per-number rotation health and suppression controls. Pick one active DID as your default for SMS; calling still uses rotation.
+            </p>
           </div>
           <button
             type="button"
@@ -287,6 +323,7 @@ export default function DidPoolPage() {
             <thead>
               <tr className="border-b border-slate-200 bg-slate-50">
                 <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">Phone</th>
+                <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">SMS default</th>
                 <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">Area</th>
                 <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">Status</th>
                 <th className="px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">Calls Today</th>
@@ -303,6 +340,34 @@ export default function DidPoolPage() {
                   className={`transition hover:bg-slate-50/70 ${row.badPerformer ? "bg-rose-50/60" : ""}`}
                 >
                   <td className="px-4 py-3 font-medium text-slate-900">{row.did}</td>
+                  <td className="px-4 py-3">
+                    {defaultMessagingDid && normalizePhone(row.did) === normalizePhone(defaultMessagingDid) ? (
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="rounded-full bg-indigo-100 px-2.5 py-1 text-xs font-semibold text-indigo-800">
+                          Default
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => void setMessagingDefaultDid(null, "clear")}
+                          disabled={smsDefaultSavingId !== null}
+                          className="text-xs font-semibold text-slate-600 underline-offset-2 hover:text-slate-900 hover:underline disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          {smsDefaultSavingId === "clear" ? "Clearing…" : "Clear"}
+                        </button>
+                      </div>
+                    ) : row.status === "active" ? (
+                      <button
+                        type="button"
+                        onClick={() => void setMessagingDefaultDid(row.did, row.id)}
+                        disabled={smsDefaultSavingId !== null}
+                        className="rounded-md border border-indigo-200 bg-indigo-50 px-2.5 py-1 text-xs font-semibold text-indigo-800 transition hover:bg-indigo-100 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {smsDefaultSavingId === row.id ? "Saving…" : "Use for SMS"}
+                      </button>
+                    ) : (
+                      <span className="text-xs text-slate-400">—</span>
+                    )}
+                  </td>
                   <td className="px-4 py-3 text-slate-700">{row.area_code || "-"}</td>
                   <td className="px-4 py-3">
                     <Badge
@@ -386,14 +451,14 @@ export default function DidPoolPage() {
               ))}
               {isLoading ? (
                 <tr>
-                  <td colSpan={8} className="px-4 py-10 text-center text-sm text-slate-500">
+                  <td colSpan={9} className="px-4 py-10 text-center text-sm text-slate-500">
                     Loading DID pool...
                   </td>
                 </tr>
               ) : null}
               {!isLoading && rows.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="px-4 py-10 text-center text-sm text-slate-500">
+                  <td colSpan={9} className="px-4 py-10 text-center text-sm text-slate-500">
                     No DIDs yet. Add a DID to begin rotation.
                   </td>
                 </tr>

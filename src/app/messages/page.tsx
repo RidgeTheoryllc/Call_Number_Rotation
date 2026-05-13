@@ -212,7 +212,8 @@ export default function MessagesPage() {
           user_id: userId,
           lead_id: selectedConversation?.leadId ?? selectedLead?.id ?? undefined,
           phone: selectedConversation?.phone ?? selectedLead?.phone ?? undefined,
-          did: selectedConversation?.did ?? selectedLead?.assigned_did ?? undefined,
+          // Only pin DID when replying in an existing thread; new threads use per-user default / rotation.
+          ...(selectedConversation?.did ? { did: selectedConversation.did } : {}),
           body: draftMessage,
         }),
       });

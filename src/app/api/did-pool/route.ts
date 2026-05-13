@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseServerClient } from "@/lib/supabase";
 import { getDidCallsToday } from "@/lib/did-engine";
-import { extractAreaCode } from "@/lib/utils";
-import { normalizePhone, toFixedNum } from "@/lib/utils";
+import { extractAreaCode, normalizePhone, toFixedNum } from "@/lib/utils";
 
 export async function GET(req: NextRequest) {
   try {
@@ -158,6 +157,21 @@ export async function DELETE(req: NextRequest) {
 
     const { error } = await supabase.from("did_pool").delete().eq("id", id).eq("user_id", userId);
     if (error) throw error;
+
+    const deletedNorm = normalizePhone(didRecord.did);
+    const { data: pref } = await supabase
+      .from("user_messaging_preferences")
+      .select("default_messaging_did")
+      .eq("user_id", userId)
+      .maybeSingle();
+    if (pref?.default_messaging_did && normalizePhone(pref.default_messaging_did) === deletedNorm) {
+      await supabase
+        .from("user_messaging_preferences")
+        .upsert(
+          { user_id: userId, default_messaging_did: null, updated_at: new Date().toISOString() },
+          { onConflict: "user_id" },
+        );
+    }
 
     return NextResponse.json({ success: true, id });
   } catch (error) {

@@ -90,3 +90,10 @@ create table if not exists message_opt_outs (
 
 create index if not exists message_opt_outs_user_phone_idx
   on message_opt_outs (user_id, phone);
+
+-- One row per app user: which DID to prefer for outbound SMS (voice/calls unchanged).
+create table if not exists user_messaging_preferences (
+  user_id uuid primary key,
+  default_messaging_did text,
+  updated_at timestamptz not null default now()
+);

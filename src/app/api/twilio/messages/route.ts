@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import twilio from "twilio";
 import { selectBestDid } from "@/lib/db";
+import { getValidatedDefaultMessagingDid } from "@/lib/messaging-default";
 import { getSupabaseServerClient } from "@/lib/supabase";
 import { normalizePhone } from "@/lib/utils";
 import type { DidRecord, LeadRecord, MessageStatus } from "@/types";
@@ -75,8 +76,14 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "phone or lead_id is required" }, { status: 400 });
     }
 
-    const normalizedRequestedDid = normalizePhone(body.did ?? lead?.assigned_did ?? "");
-    let from = normalizedRequestedDid;
+    const explicitDid = normalizePhone(body.did?.trim() ?? "");
+    let from = explicitDid;
+    if (!from) {
+      from = (await getValidatedDefaultMessagingDid(supabase, userId)) ?? "";
+    }
+    if (!from && lead?.assigned_did) {
+      from = normalizePhone(lead.assigned_did);
+    }
     if (!from) {
       const { bestDid } = await selectBestDid(to, userId);
       from = normalizePhone(bestDid?.did ?? "");
