@@ -24,6 +24,20 @@ type ConfigureSummary = {
   results: ConfigureResult[];
 };
 
+type MessagingConfigureRow = {
+  did: string;
+  status: "updated" | "not_found_in_twilio" | "error";
+  smsUrl?: string;
+  statusCallback?: string;
+  error?: string;
+};
+
+type MessagingConfigureSummary = {
+  smsUrl: string;
+  statusCallbackUrl: string;
+  updated: MessagingConfigureRow[];
+};
+
 export default function DidPoolPage() {
   const [dids, setDids] = useState<DidRecord[]>([]);
   const [did, setDid] = useState("");
@@ -36,7 +50,9 @@ export default function DidPoolPage() {
   const [deletingDidIds, setDeletingDidIds] = useState<Record<string, boolean>>({});
   const [didPendingDelete, setDidPendingDelete] = useState<DidRecord | null>(null);
   const [isConfiguring, setIsConfiguring] = useState(false);
+  const [isConfiguringMessaging, setIsConfiguringMessaging] = useState(false);
   const [configureSummary, setConfigureSummary] = useState<ConfigureSummary | null>(null);
+  const [messagingConfigureSummary, setMessagingConfigureSummary] = useState<MessagingConfigureSummary | null>(null);
   const supabase = getSupabaseBrowserClient();
 
   const load = useCallback(async () => {
@@ -131,6 +147,7 @@ export default function DidPoolPage() {
     }
     setError("");
     setConfigureSummary(null);
+    setMessagingConfigureSummary(null);
     setIsConfiguring(true);
     try {
       const res = await fetch("/api/twilio/configure-numbers", {
@@ -146,6 +163,32 @@ export default function DidPoolPage() {
       setConfigureSummary(json as ConfigureSummary);
     } finally {
       setIsConfiguring(false);
+    }
+  };
+
+  const configureSmsWebhooks = async () => {
+    if (!userId) {
+      setError("You must be signed in to configure SMS webhooks.");
+      return;
+    }
+    setError("");
+    setMessagingConfigureSummary(null);
+    setConfigureSummary(null);
+    setIsConfiguringMessaging(true);
+    try {
+      const res = await fetch("/api/twilio/configure-messaging", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ user_id: userId }),
+      });
+      const json = await res.json();
+      if (!res.ok) {
+        setError(json.error ?? "Failed to configure SMS webhooks.");
+        return;
+      }
+      setMessagingConfigureSummary(json as MessagingConfigureSummary);
+    } finally {
+      setIsConfiguringMessaging(false);
     }
   };
 
@@ -222,13 +265,15 @@ export default function DidPoolPage() {
           <div>
             <h1 className="text-3xl font-semibold tracking-tight text-slate-900">DID Pool Management</h1>
             <p className="mt-1 text-sm text-slate-500">
-              Per-number rotation health and suppression controls. Pick one active DID as your default for SMS; calling still uses rotation.
+              Per-number rotation health and suppression controls. Pick one active DID as your default for SMS; calling still uses rotation. If Twilio uses
+              &quot;Defer to sender&quot; on your Messaging Service, run <strong>Configure SMS webhooks</strong> so replies reach this app.
             </p>
           </div>
+          <div className="flex flex-wrap gap-2">
           <button
             type="button"
             onClick={configureInboundWebhooks}
-            disabled={isConfiguring || !userId || dids.length === 0}
+            disabled={isConfiguring || isConfiguringMessaging || !userId || dids.length === 0}
             title="Point each DID's voice webhook at /api/twilio/inbound so callbacks ring the agent."
             className="inline-flex h-9 items-center gap-2 rounded-md border border-slate-300 bg-white px-3 text-xs font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
           >
@@ -255,6 +300,23 @@ export default function DidPoolPage() {
             )}
             Configure inbound webhooks
           </button>
+          <button
+            type="button"
+            onClick={() => void configureSmsWebhooks()}
+            disabled={isConfiguring || isConfiguringMessaging || !userId || dids.length === 0}
+            title="Sets each pool DID's Twilio Messaging URL to /api/twilio/messages/inbound (required when Messaging Service uses Defer to sender)."
+            className="inline-flex h-9 items-center gap-2 rounded-md border border-indigo-200 bg-indigo-50 px-3 text-xs font-semibold text-indigo-900 transition hover:bg-indigo-100 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {isConfiguringMessaging ? (
+              <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-indigo-300 border-t-indigo-800" />
+            ) : (
+              <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+              </svg>
+            )}
+            Configure SMS webhooks
+          </button>
+          </div>
         </div>
 
         {configureSummary ? (
@@ -280,6 +342,43 @@ export default function DidPoolPage() {
             {configureSummary.errors > 0 || configureSummary.missing > 0 ? (
               <ul className="mt-3 space-y-1 text-xs text-slate-600">
                 {configureSummary.results
+                  .filter((r) => r.status !== "updated")
+                  .map((r) => (
+                    <li key={r.did} className="font-mono">
+                      <span className="text-slate-900">{r.did}</span>{" "}
+                      <span className="text-slate-500">
+                        — {r.status === "not_found_in_twilio" ? "not in Twilio account" : r.error}
+                      </span>
+                    </li>
+                  ))}
+              </ul>
+            ) : null}
+          </div>
+        ) : null}
+
+        {messagingConfigureSummary ? (
+          <div className="rounded-xl border border-indigo-100 bg-indigo-50/40 p-4 text-sm shadow-sm">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-semibold text-emerald-700">
+                {messagingConfigureSummary.updated.filter((r) => r.status === "updated").length} SMS webhooks updated
+              </span>
+              {messagingConfigureSummary.updated.filter((r) => r.status === "not_found_in_twilio").length > 0 ? (
+                <span className="rounded-full bg-amber-100 px-2.5 py-1 text-xs font-semibold text-amber-800">
+                  {messagingConfigureSummary.updated.filter((r) => r.status === "not_found_in_twilio").length} not found in Twilio
+                </span>
+              ) : null}
+              {messagingConfigureSummary.updated.filter((r) => r.status === "error").length > 0 ? (
+                <span className="rounded-full bg-rose-100 px-2.5 py-1 text-xs font-semibold text-rose-700">
+                  {messagingConfigureSummary.updated.filter((r) => r.status === "error").length} errors
+                </span>
+              ) : null}
+              <span className="text-xs text-slate-600">
+                Messaging URL: <code className="font-mono">{messagingConfigureSummary.smsUrl}</code>
+              </span>
+            </div>
+            {messagingConfigureSummary.updated.some((r) => r.status !== "updated") ? (
+              <ul className="mt-3 space-y-1 text-xs text-slate-600">
+                {messagingConfigureSummary.updated
                   .filter((r) => r.status !== "updated")
                   .map((r) => (
                     <li key={r.did} className="font-mono">
