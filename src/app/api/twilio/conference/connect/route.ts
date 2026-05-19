@@ -3,9 +3,9 @@ import { getSupabaseServerClient } from "@/lib/supabase";
 import { normalizePhone } from "@/lib/utils";
 import {
   dialParticipantIntoConference,
-  getActiveConferenceSessionForUser,
   getPublicBaseUrl,
   isConferenceCallsEnabled,
+  resolveConferenceSessionForConnect,
 } from "@/lib/twilio-conference";
 
 export async function POST(req: NextRequest) {
@@ -38,26 +38,14 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Saved contact not found" }, { status: 404 });
     }
 
-    let session = await getActiveConferenceSessionForUser(userId);
-    if (!session && agentCallSid) {
-      const { data: bySid } = await supabase
-        .from("call_conference_sessions")
-        .select("*")
-        .eq("agent_call_sid", agentCallSid)
-        .eq("status", "active")
-        .maybeSingle();
-      session = bySid;
+    const resolved = await resolveConferenceSessionForConnect({
+      userId,
+      agentCallSid,
+    });
+    if (!resolved.ok) {
+      return NextResponse.json({ error: resolved.message, code: resolved.code }, { status: 409 });
     }
-
-    if (!session) {
-      return NextResponse.json(
-        {
-          error:
-            "No active conference for this call. Start or answer a call on Leads/Callbacks first, then try Connect again.",
-        },
-        { status: 409 },
-      );
-    }
+    const session = resolved.session;
 
     const baseUrl = getPublicBaseUrl(req.nextUrl.origin);
     const thirdPartyPhone = normalizePhone(participant.phone);

@@ -2,11 +2,22 @@
 
 import Link from "next/link";
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { Call } from "@twilio/voice-sdk";
 import { AppShell } from "@/components/app-shell";
 import { useTwilioDeviceContext } from "@/components/twilio-device-provider";
 import { getSupabaseBrowserClient } from "@/lib/supabase";
 import { normalizePhone } from "@/lib/utils";
 import type { ConferenceParticipantRecord } from "@/types";
+
+function getAgentCallSid(call: Call | null): string | undefined {
+  if (!call) return undefined;
+  const params = call.parameters ?? {};
+  const fromParams = params.CallSid ?? params.callSid;
+  if (typeof fromParams === "string" && fromParams.length > 0) return fromParams;
+  const outboundId = (call as Call & { outboundConnectionId?: string }).outboundConnectionId;
+  if (typeof outboundId === "string" && outboundId.length > 0) return outboundId;
+  return undefined;
+}
 
 function isValidDialablePhone(phone: string): boolean {
   const digits = normalizePhone(phone).replace(/\D/g, "");
@@ -69,6 +80,8 @@ export default function ConnectCallPage() {
   const [connectedIds, setConnectedIds] = useState<Record<string, boolean>>({});
   const [callDurationSeconds, setCallDurationSeconds] = useState(0);
   const [toast, setToast] = useState<{ tone: "success" | "warn"; message: string } | null>(null);
+  const [conferenceReady, setConferenceReady] = useState<boolean | null>(null);
+  const [conferenceHint, setConferenceHint] = useState("");
 
   const canConnect = callStatus === "in-progress";
   const incomingCaller =
@@ -156,15 +169,50 @@ export default function ConnectCallPage() {
 
   useEffect(() => {
     if (callStatus !== "in-progress") return;
+
     const timer = window.setInterval(() => {
       setCallDurationSeconds((prev) => prev + 1);
     }, 1000);
+
     return () => {
       clearInterval(timer);
       setCallDurationSeconds(0);
       setConnectedIds({});
     };
   }, [callStatus]);
+
+  useEffect(() => {
+    if (callStatus !== "in-progress" || !userId) return;
+
+    let cancelled = false;
+
+    const checkConference = async () => {
+      const agentCallSid = getAgentCallSid(activeCall);
+      const params = new URLSearchParams({ user_id: userId });
+      if (agentCallSid) params.set("agent_call_sid", agentCallSid);
+
+      try {
+        const res = await fetch(`/api/twilio/conference/active?${params.toString()}`);
+        const data = (await res.json()) as { ready?: boolean; message?: string };
+        if (cancelled) return;
+        setConferenceReady(Boolean(data.ready));
+        setConferenceHint(data.message ?? "");
+      } catch {
+        if (!cancelled) {
+          setConferenceReady(null);
+          setConferenceHint("");
+        }
+      }
+    };
+
+    void checkConference();
+    const poll = window.setInterval(() => void checkConference(), 8000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(poll);
+    };
+  }, [activeCall, callStatus, userId]);
 
   const displayCallDurationSeconds = callStatus === "in-progress" ? callDurationSeconds : 0;
   const connectedIdsForActiveCall = callStatus === "in-progress" ? connectedIds : {};
@@ -351,11 +399,7 @@ export default function ConnectCallPage() {
     setConnectingIds((prev) => ({ ...prev, [row.id]: true }));
 
     try {
-      const agentCallSid =
-        activeCall?.parameters?.CallSid ??
-        activeCall?.parameters?.callSid ??
-        activeCall?.outboundConnectionId ??
-        undefined;
+      const agentCallSid = getAgentCallSid(activeCall);
 
       const res = await fetch("/api/twilio/conference/connect", {
         method: "POST",
@@ -459,6 +503,13 @@ export default function ConnectCallPage() {
             </div>
           </div>
         </section>
+
+        {callStatus === "in-progress" && conferenceReady === false && conferenceHint ? (
+          <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+            <p className="font-semibold">Connect is not available on this call</p>
+            <p className="mt-1">{conferenceHint}</p>
+          </div>
+        ) : null}
 
         <section className="rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
           <h2 className="text-xs font-semibold uppercase tracking-wide text-slate-500">How it works</h2>

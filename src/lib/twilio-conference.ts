@@ -90,6 +90,167 @@ export async function getActiveConferenceSessionForUser(userId: string) {
   return data;
 }
 
+export type ConferenceConnectFailureCode =
+  | "not_enabled"
+  | "missing_agent_call_sid"
+  | "no_live_conference"
+  | "no_db_session";
+
+export async function resolveConferenceSessionForConnect(input: {
+  userId: string;
+  agentCallSid?: string | null;
+}): Promise<
+  | { ok: true; session: NonNullable<Awaited<ReturnType<typeof getActiveConferenceSessionForUser>>> }
+  | { ok: false; code: ConferenceConnectFailureCode; message: string }
+> {
+  if (!isConferenceCallsEnabled()) {
+    return {
+      ok: false,
+      code: "not_enabled",
+      message:
+        "Conference calling is not enabled on the server. Set TWILIO_CONFERENCE_CALLS=true and redeploy, then place a new call.",
+    };
+  }
+
+  const supabase = getSupabaseServerClient();
+
+  let session = await getActiveConferenceSessionForUser(input.userId);
+
+  if (!session && input.agentCallSid) {
+    const { data: bySid } = await supabase
+      .from("call_conference_sessions")
+      .select("*")
+      .eq("agent_call_sid", input.agentCallSid)
+      .eq("status", "active")
+      .maybeSingle();
+    session = bySid;
+  }
+
+  if (session) {
+    return { ok: true, session };
+  }
+
+  const agentCallSid = input.agentCallSid?.trim();
+  if (!agentCallSid) {
+    return {
+      ok: false,
+      code: "missing_agent_call_sid",
+      message:
+        "Could not read your live call ID. Stay on this page during the call, or hang up and dial again from Leads/Callbacks.",
+    };
+  }
+
+  const conferenceName = conferenceNameFromCallSid(agentCallSid);
+  const client = getTwilioClient();
+
+  const conferences = await client.conferences.list({
+    friendlyName: conferenceName,
+    status: "in-progress",
+    limit: 1,
+  });
+  const liveConference = conferences[0];
+
+  if (!liveConference) {
+    return {
+      ok: false,
+      code: "no_live_conference",
+      message:
+        "This call is not on a conference line (likely started before conference mode was enabled). Hang up, confirm TWILIO_CONFERENCE_CALLS=true on your deployed server, then start a new call from Leads or Callbacks.",
+    };
+  }
+
+  let leadPhone = "";
+  let callerId = "";
+  let direction: "inbound" | "outbound" = "outbound";
+
+  const agentCall = await client.calls(agentCallSid).fetch();
+  const childCalls = await client.calls.list({ parentCallSid: agentCallSid, limit: 20 });
+  for (const child of childCalls) {
+    const to = child.to ?? "";
+    if (!to.startsWith("client:")) {
+      leadPhone = normalizePhone(to);
+      callerId = normalizePhone(child.from ?? "");
+      direction = (child.direction ?? "").toLowerCase().includes("inbound") ? "inbound" : "outbound";
+      break;
+    }
+  }
+
+  if (!leadPhone) {
+    const participants = await client.conferences(liveConference.sid).participants.list();
+    for (const participant of participants) {
+      if (!participant.callSid || participant.callSid === agentCallSid) continue;
+      try {
+        const participantCall = await client.calls(participant.callSid).fetch();
+        const to = participantCall.to ?? "";
+        if (!to.startsWith("client:")) {
+          leadPhone = normalizePhone(to);
+          callerId = normalizePhone(participantCall.from ?? "");
+          break;
+        }
+        const from = participantCall.from ?? "";
+        if (!from.startsWith("client:")) {
+          leadPhone = normalizePhone(from);
+          callerId = normalizePhone(participantCall.to ?? "");
+          direction = "inbound";
+          break;
+        }
+      } catch {
+        // skip unreadable participant legs
+      }
+    }
+  }
+
+  if (!callerId) {
+    callerId = normalizePhone(agentCall.from ?? "");
+  }
+  if (!leadPhone) {
+    leadPhone = normalizePhone(agentCall.to?.replace(/^client:/, "") ?? "") || "unknown";
+  }
+
+  const { data: reactivated, error: reactivateError } = await supabase
+    .from("call_conference_sessions")
+    .update({
+      status: "active",
+      ended_at: null,
+      agent_call_sid: agentCallSid,
+      lead_phone: leadPhone,
+      caller_id: callerId || leadPhone,
+      direction,
+    })
+    .eq("conference_name", conferenceName)
+    .select("*")
+    .maybeSingle();
+  if (reactivateError) throw reactivateError;
+
+  if (reactivated) {
+    return { ok: true, session: reactivated };
+  }
+
+  try {
+    const created = await createConferenceSession({
+      userId: input.userId,
+      conferenceName,
+      direction,
+      leadPhone,
+      callerId: callerId || leadPhone,
+      agentIdentity: `agent-${input.userId}`,
+      agentCallSid,
+    });
+    return { ok: true, session: created };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (message.includes("call_conference_sessions") || message.includes("schema cache")) {
+      return {
+        ok: false,
+        code: "no_db_session",
+        message:
+          "Conference database table is missing. Run app/migrations/20260518_call_conference_sessions.sql in Supabase, then place a new call.",
+      };
+    }
+    throw error;
+  }
+}
+
 export async function getActiveConferenceSessionByName(conferenceName: string) {
   const supabase = getSupabaseServerClient();
   const { data, error } = await supabase

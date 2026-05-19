@@ -102,7 +102,18 @@ export async function POST(req: NextRequest) {
 
       return new NextResponse(twiml, { headers: { "Content-Type": "text/xml" } });
     } catch (error) {
-      console.error("[twilio/voice] conference setup failed, falling back to dial bridge", error);
+      const message = error instanceof Error ? error.message : String(error);
+      console.error("[twilio/voice] conference setup failed, falling back to dial bridge", message);
+      if (message.includes("call_conference_sessions") || message.includes("schema cache")) {
+        const response = new twilio.twiml.VoiceResponse();
+        response.say(
+          "Conference calling is not set up in the database. Ask your administrator to run the conference sessions migration, then try again.",
+        );
+        response.hangup();
+        return new NextResponse(response.toString(), {
+          headers: { "Content-Type": "text/xml" },
+        });
+      }
     }
   }
 
