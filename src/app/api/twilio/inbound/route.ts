@@ -132,7 +132,7 @@ export async function POST(req: NextRequest) {
           endConferenceOnExit: false,
           waitUrl: waitUrl.toString(),
           statusCallback: conferenceStatusUrl.toString(),
-          statusCallbackEvent: ["end"],
+          statusCallbackEvent: ["end", "leave"],
           beep: "false",
         },
         conferenceName,

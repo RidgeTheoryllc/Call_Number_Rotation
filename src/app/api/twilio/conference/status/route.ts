@@ -2,19 +2,30 @@ import { NextRequest, NextResponse } from "next/server";
 import { updateDidAfterCall } from "@/lib/db";
 import { getSupabaseServerClient } from "@/lib/supabase";
 import {
+  disconnectAgentWhenLeadLeaves,
   endConferenceSession,
   getActiveConferenceSessionByName,
 } from "@/lib/twilio-conference";
 import type { CallResult } from "@/types";
 
-/** Marks DB session ended when Twilio conference completes; logs inbound conferences. */
+/** Conference lifecycle: lead leave releases agent; conference end cleans up DB. */
 export async function POST(req: NextRequest) {
   const query = req.nextUrl.searchParams;
   const conferenceName = query.get("name");
   const form = await req.formData();
   const event = String(form.get("StatusCallbackEvent") ?? form.get("Event") ?? "").toLowerCase();
+  const leftCallSid = String(form.get("CallSid") ?? "").trim() || null;
 
-  if (!conferenceName || (event !== "conference-end" && event !== "end")) {
+  if (!conferenceName) {
+    return new NextResponse("", { status: 204 });
+  }
+
+  if (event === "participant-leave" || event === "leave") {
+    await disconnectAgentWhenLeadLeaves(conferenceName, leftCallSid);
+    return new NextResponse("", { status: 204 });
+  }
+
+  if (event !== "conference-end" && event !== "end") {
     return new NextResponse("", { status: 204 });
   }
 

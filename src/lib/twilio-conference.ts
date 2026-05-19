@@ -328,6 +328,59 @@ export async function endConferenceSession(conferenceName: string) {
     .eq("status", "active");
 }
 
+/** Ends a Twilio call leg (e.g. agent browser) if it is still active. */
+export async function hangupCallBySid(callSid: string): Promise<void> {
+  const client = getTwilioClient();
+  try {
+    const call = await client.calls(callSid).fetch();
+    const status = (call.status ?? "").toLowerCase();
+    if (status !== "completed" && status !== "canceled") {
+      await client.calls(callSid).update({ status: "completed" });
+    }
+  } catch {
+    // Leg already ended.
+  }
+}
+
+/**
+ * When the lead leaves a conference, disconnect the agent's browser leg so the UI resets.
+ * Ignores agent leave and third-party (Connect) participants.
+ */
+export async function disconnectAgentWhenLeadLeaves(
+  conferenceName: string,
+  leftCallSid: string | null | undefined,
+): Promise<void> {
+  if (!leftCallSid?.trim()) return;
+
+  const session = await getActiveConferenceSessionByName(conferenceName);
+  if (!session) return;
+
+  const agentSid = session.agent_call_sid as string | null;
+  if (!agentSid || leftCallSid === agentSid) return;
+
+  const leadSid =
+    (session.lead_call_sid as string | null) ??
+    (session.direction === "inbound" ? (session.parent_call_sid as string | null) : null);
+
+  if (leadSid) {
+    if (leftCallSid !== leadSid) return;
+  } else if (session.direction === "outbound") {
+    return;
+  }
+
+  await hangupCallBySid(agentSid);
+  await endConferenceSession(conferenceName);
+}
+
+export async function setConferenceLeadCallSid(conferenceName: string, leadCallSid: string): Promise<void> {
+  const supabase = getSupabaseServerClient();
+  await supabase
+    .from("call_conference_sessions")
+    .update({ lead_call_sid: leadCallSid })
+    .eq("conference_name", conferenceName)
+    .eq("status", "active");
+}
+
 export function buildJoinConferenceTwiml(options: {
   conferenceName: string;
   callerId?: string;
@@ -350,7 +403,7 @@ export function buildJoinConferenceTwiml(options: {
   if (options.waitUrl) conferenceAttrs.waitUrl = options.waitUrl;
   if (options.statusCallback) {
     conferenceAttrs.statusCallback = options.statusCallback;
-    conferenceAttrs.statusCallbackEvent = "end";
+    conferenceAttrs.statusCallbackEvent = "end leave";
   }
 
   const dial = response.dial(dialAttrs);
@@ -364,6 +417,9 @@ export async function dialParticipantIntoConference(input: {
   from: string;
   conferenceName: string;
   startConferenceOnEnter?: boolean;
+  /** When set, hang up this agent leg when the dialed lead's call ends. */
+  agentCallSid?: string;
+  trackAsLeadLeg?: boolean;
 }) {
   const client = getTwilioClient();
   const joinUrl = new URL("/api/twilio/conference/join", input.baseUrl);
@@ -374,10 +430,21 @@ export async function dialParticipantIntoConference(input: {
     input.startConferenceOnEnter ? "true" : "false",
   );
 
-  return client.calls.create({
+  const createParams: Parameters<typeof client.calls.create>[0] = {
     to: input.to,
     from: input.from,
     url: joinUrl.toString(),
     method: "POST",
-  });
+  };
+
+  if (input.trackAsLeadLeg && input.agentCallSid) {
+    const leadStatusUrl = new URL("/api/twilio/conference/lead-leg-status", input.baseUrl);
+    leadStatusUrl.searchParams.set("conferenceName", input.conferenceName);
+    leadStatusUrl.searchParams.set("agentCallSid", input.agentCallSid);
+    createParams.statusCallback = leadStatusUrl.toString();
+    createParams.statusCallbackMethod = "POST";
+    createParams.statusCallbackEvent = ["completed", "canceled", "busy", "no-answer", "failed"];
+  }
+
+  return client.calls.create(createParams);
 }

@@ -9,6 +9,7 @@ import {
   isConferenceCallsEnabled,
   resolveAgentIdentityFromVoiceRequest,
   resolveAgentUserIdFromVoiceRequest,
+  setConferenceLeadCallSid,
 } from "@/lib/twilio-conference";
 import { normalizePhone } from "@/lib/utils";
 
@@ -92,9 +93,13 @@ export async function POST(req: NextRequest) {
         from: callerId,
         conferenceName,
         startConferenceOnEnter: false,
-      }).catch((error) => {
-        console.error("[twilio/voice] failed to dial lead into conference", error);
-      });
+        agentCallSid: callSid,
+        trackAsLeadLeg: true,
+      })
+        .then((leadCall) => setConferenceLeadCallSid(conferenceName, leadCall.sid))
+        .catch((error) => {
+          console.error("[twilio/voice] failed to dial lead into conference", error);
+        });
 
       const statusUrl = new URL("/api/twilio/conference/status", baseUrl);
       statusUrl.searchParams.set("name", conferenceName);
