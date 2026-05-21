@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { AppShell } from "@/components/app-shell";
 import { CallbackSchedulePicker } from "@/components/callback-schedule-picker";
 import { useWorkspaceDataCache } from "@/components/workspace-data-cache";
-import { isoToDatetimeLocalValue } from "@/lib/callback-schedule";
+import { isoToDatetimeLocalValue, parseDatetimeLocalValue } from "@/lib/callback-schedule";
 import { getSupabaseBrowserClient } from "@/lib/supabase";
 import type { CallLogRecord, LeadRecord } from "@/types";
 
@@ -111,8 +111,8 @@ export default function CallLogsPage() {
       showToast("warn", "Pick a date and time for the callback.");
       return;
     }
-    const parsed = new Date(scheduleAt);
-    if (Number.isNaN(parsed.getTime())) {
+    const parsed = parseDatetimeLocalValue(scheduleAt);
+    if (!parsed) {
       showToast("warn", "That date and time is not valid.");
       return;
     }

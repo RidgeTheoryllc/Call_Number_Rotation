@@ -7,7 +7,11 @@ import { CallbackSchedulePicker } from "@/components/callback-schedule-picker";
 import { useTwilioDeviceContext } from "@/components/twilio-device-provider";
 import { TwilioMicSelector } from "@/components/twilio-mic-selector";
 import { useWorkspaceDataCache } from "@/components/workspace-data-cache";
-import { isoToDatetimeLocalValue, isSameLocalCalendarDay } from "@/lib/callback-schedule";
+import {
+  isoToDatetimeLocalValue,
+  isSameLocalCalendarDay,
+  parseDatetimeLocalValue,
+} from "@/lib/callback-schedule";
 import { getSupabaseBrowserClient } from "@/lib/supabase";
 import type { LeadRecord } from "@/types";
 
@@ -20,6 +24,10 @@ function sortLeadsByPriority(rows: LeadRecord[]): LeadRecord[] {
     const bc = b.created_at ? new Date(b.created_at).getTime() : 0;
     return bc - ac;
   });
+}
+
+function mergeLeadUpdate(rows: LeadRecord[], updated: LeadRecord): LeadRecord[] {
+  return sortLeadsByPriority(rows.map((l) => (l.id === updated.id ? { ...l, ...updated } : l)));
 }
 
 export default function CallbacksPage() {
@@ -90,6 +98,7 @@ export default function CallbacksPage() {
   useEffect(() => {
     if (!scheduleLead) return;
     queueMicrotask(() => {
+      setError("");
       setScheduleNotes(scheduleLead.callback_notes ?? "");
       setScheduleAt(
         scheduleLead.callback_at
@@ -99,25 +108,35 @@ export default function CallbacksPage() {
     });
   }, [scheduleLead]);
 
-  const load = useCallback(async () => {
-    if (!userId) {
-      setLeads([]);
-      setIsLoading(false);
-      return;
-    }
-    setIsLoading(true);
-    try {
-      const res = await fetch(`/api/leads?user_id=${encodeURIComponent(userId)}`);
-      const json = await res.json();
-      if (res.ok) {
-        const rows = sortLeadsByPriority(json as LeadRecord[]);
-        setLeads(rows);
-        workspaceCache.setCachedLeads(userId, rows);
+  const applyLeads = useCallback(
+    (rows: LeadRecord[]) => {
+      const sorted = sortLeadsByPriority(rows);
+      setLeads(sorted);
+      if (userId) workspaceCache.setCachedLeads(userId, sorted);
+    },
+    [userId, workspaceCache],
+  );
+
+  const load = useCallback(
+    async (opts?: { silent?: boolean }) => {
+      if (!userId) {
+        setLeads([]);
+        setIsLoading(false);
+        return;
       }
-    } finally {
-      setIsLoading(false);
-    }
-  }, [userId, workspaceCache]);
+      if (!opts?.silent) setIsLoading(true);
+      try {
+        const res = await fetch(`/api/leads?user_id=${encodeURIComponent(userId)}`, { cache: "no-store" });
+        const json = await res.json();
+        if (res.ok) {
+          applyLeads(json as LeadRecord[]);
+        }
+      } finally {
+        if (!opts?.silent) setIsLoading(false);
+      }
+    },
+    [userId, applyLeads],
+  );
 
   useEffect(() => {
     const run = async () => {
@@ -143,9 +162,8 @@ export default function CallbacksPage() {
         setLeads(cached);
         setIsLoading(false);
       });
-      return;
     }
-    const timer = window.setTimeout(() => void load(), 0);
+    const timer = window.setTimeout(() => void load({ silent: cached !== null }), 0);
     return () => clearTimeout(timer);
   }, [userId, workspaceCache, load]);
 
@@ -245,8 +263,8 @@ export default function CallbacksPage() {
       showToast("warn", "Pick a date and time for the callback.");
       return;
     }
-    const parsed = new Date(scheduleAt);
-    if (Number.isNaN(parsed.getTime())) {
+    const parsed = parseDatetimeLocalValue(scheduleAt);
+    if (!parsed) {
       showToast("warn", "That date and time is not valid.");
       return;
     }
@@ -263,14 +281,22 @@ export default function CallbacksPage() {
           callback_notes: scheduleNotes.trim() ? scheduleNotes.trim() : null,
         }),
       });
-      const json = await res.json();
+      const json = (await res.json()) as LeadRecord & { error?: string };
       if (!res.ok) {
         setError(json.error ?? "Failed to save callback.");
         return;
       }
-      showToast("success", "Callback updated.");
+      const updated = json as LeadRecord;
+      setLeads((prev) => mergeLeadUpdate(prev, updated));
+      const cached = workspaceCache.getCachedLeads(userId);
+      workspaceCache.setCachedLeads(userId, mergeLeadUpdate(cached ?? leads, updated));
+      if (todayOnly && updated.callback_at && !isSameLocalCalendarDay(updated.callback_at)) {
+        showToast("warn", "Saved. Callback is on another day — turn off “Today only” to see it in the list.");
+      } else {
+        showToast("success", "Callback updated.");
+      }
       setScheduleLead(null);
-      await load();
+      void load({ silent: true });
     } finally {
       setScheduleSaving(false);
     }
@@ -292,14 +318,18 @@ export default function CallbacksPage() {
           callback_notes: null,
         }),
       });
-      const json = await res.json();
+      const json = (await res.json()) as LeadRecord & { error?: string };
       if (!res.ok) {
         setError(json.error ?? "Failed to remove from callback queue.");
         return;
       }
+      const updated = json as LeadRecord;
+      setLeads((prev) => mergeLeadUpdate(prev, updated));
+      const cached = workspaceCache.getCachedLeads(userId);
+      workspaceCache.setCachedLeads(userId, mergeLeadUpdate(cached ?? leads, updated));
       showToast("success", "Removed from callback queue.");
       setScheduleLead(null);
-      await load();
+      void load({ silent: true });
     } finally {
       setScheduleSaving(false);
     }
@@ -593,6 +623,11 @@ export default function CallbacksPage() {
                 className="resize-y rounded-xl border border-slate-200 bg-slate-50/50 px-3 py-2.5 text-sm text-slate-900 outline-none transition focus:border-indigo-400 focus:bg-white focus:ring-2 focus:ring-indigo-100"
               />
             </div>
+            {error ? (
+              <p className="mt-4 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm font-medium text-rose-700">
+                {error}
+              </p>
+            ) : null}
             <div className="mt-6 flex flex-wrap items-center justify-end gap-2 border-t border-slate-100 pt-5">
               <button
                 type="button"
