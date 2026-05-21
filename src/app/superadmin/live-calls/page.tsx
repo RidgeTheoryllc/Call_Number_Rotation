@@ -28,6 +28,20 @@ function formatDuration(seconds: number): string {
   return `${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
 }
 
+function InCallBadge({ className = "" }: { className?: string }) {
+  return (
+    <span
+      className={`inline-flex items-center gap-1.5 rounded-full border border-red-500/30 bg-red-950/50 px-2.5 py-1 text-xs font-semibold text-red-200 ${className}`.trim()}
+    >
+      <span className="relative flex h-2 w-2" aria-hidden>
+        <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-red-500 opacity-75" />
+        <span className="relative inline-flex h-2 w-2 rounded-full bg-red-500" />
+      </span>
+      In a call
+    </span>
+  );
+}
+
 export default function SuperadminLiveCallsPage() {
   const supabase = useMemo(() => getSupabaseBrowserClient(), []);
   const {
@@ -275,7 +289,7 @@ export default function SuperadminLiveCallsPage() {
           <div className="rounded-xl border border-rose-500/40 bg-rose-950/40 p-3 text-sm text-rose-200">{error}</div>
         ) : null}
 
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex flex-wrap items-center gap-3">
           <button
             type="button"
             onClick={() => void loadActiveCalls()}
@@ -284,6 +298,11 @@ export default function SuperadminLiveCallsPage() {
           >
             {isLoadingCalls ? "Refreshing..." : "Refresh now"}
           </button>
+          {calls.length > 0 ? (
+            <InCallBadge />
+          ) : (
+            <span className="text-xs font-medium text-slate-500">No agents in a call right now</span>
+          )}
           <p className="text-xs text-slate-500">Auto-refreshes every 5 seconds.</p>
         </div>
 
@@ -291,6 +310,7 @@ export default function SuperadminLiveCallsPage() {
           <table className="min-w-full text-left text-sm">
             <thead className="border-b border-slate-800 bg-slate-950/60 text-xs uppercase tracking-wide text-slate-500">
               <tr>
+                <th className="px-4 py-3 font-semibold">Status</th>
                 <th className="px-4 py-3 font-semibold">Agent</th>
                 <th className="px-4 py-3 font-semibold">Lead</th>
                 <th className="px-4 py-3 font-semibold">Direction</th>
@@ -301,7 +321,7 @@ export default function SuperadminLiveCallsPage() {
             <tbody>
               {calls.length === 0 ? (
                 <tr>
-                  <td colSpan={5} className="px-4 py-8 text-center text-slate-500">
+                  <td colSpan={6} className="px-4 py-8 text-center text-slate-500">
                     {isLoadingCalls && calls.length === 0
                       ? "Loading active calls..."
                       : "No agents on a conference call right now."}
@@ -315,6 +335,9 @@ export default function SuperadminLiveCallsPage() {
 
                   return (
                     <tr key={row.id} className="border-t border-slate-800/80">
+                      <td className="px-4 py-3">
+                        <InCallBadge />
+                      </td>
                       <td className="px-4 py-3 font-medium text-white">{row.agent_email}</td>
                       <td className="px-4 py-3 text-slate-200">{formatPhone(row.lead_phone)}</td>
                       <td className="px-4 py-3 capitalize text-slate-200">{row.direction}</td>

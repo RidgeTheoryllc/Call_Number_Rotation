@@ -158,9 +158,15 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     router.refresh();
   };
 
+  const lockMainScroll = pathname === "/leads";
+
   return (
-    <div className="min-h-screen bg-slate-50 md:grid md:grid-cols-[280px_1fr]">
-      <aside className="flex flex-col border-b border-slate-200 bg-white/95 p-4 backdrop-blur md:sticky md:top-0 md:h-screen md:overflow-hidden md:border-b-0 md:border-r md:p-5">
+    <div
+      className={`min-h-0 flex-1 bg-slate-50 md:grid md:grid-cols-[280px_1fr] ${
+        lockMainScroll ? "overflow-hidden md:h-full" : "min-h-screen"
+      }`}
+    >
+      <aside className="flex flex-col border-b border-slate-200 bg-white/95 p-4 backdrop-blur md:sticky md:top-0 md:h-full md:overflow-hidden md:border-b-0 md:border-r md:p-5">
         <div className="mb-5 rounded-2xl border border-slate-200 bg-slate-50 p-4">
           <span className="inline-flex rounded-full border border-indigo-100 bg-indigo-50 px-2.5 py-1 text-xs font-semibold uppercase tracking-wide text-indigo-700">
             Ridge Theory
@@ -204,8 +210,16 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </div>
       </aside>
 
-      <div className="min-w-0">
-        <main className="mx-auto w-full max-w-7xl px-4 py-6 md:px-6 md:py-8">{children}</main>
+      <div className={`min-h-0 min-w-0 ${lockMainScroll ? "flex flex-col overflow-hidden" : ""}`}>
+        <main
+          className={`mx-auto w-full max-w-7xl px-4 sm:px-6 ${
+            lockMainScroll
+              ? "flex min-h-0 flex-1 flex-col overflow-hidden py-5 md:py-6"
+              : "py-6 md:py-8"
+          }`}
+        >
+          {children}
+        </main>
       </div>
       <NotepadDrawer />
     </div>

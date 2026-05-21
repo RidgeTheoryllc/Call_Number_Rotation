@@ -6,6 +6,7 @@ import Papa from "papaparse";
 import { AppShell } from "@/components/app-shell";
 import type { LeadRecord } from "@/types";
 import { useTwilioDeviceContext } from "@/components/twilio-device-provider";
+import { TwilioMicSelector } from "@/components/twilio-mic-selector";
 import { useWorkspaceDataCache } from "@/components/workspace-data-cache";
 import { getSupabaseBrowserClient } from "@/lib/supabase";
 
@@ -509,10 +510,10 @@ export default function LeadsPage() {
 
   return (
     <AppShell>
-      <section className="mx-auto max-w-7xl space-y-5 px-4 py-6 sm:px-6">
+      <section className="flex min-h-0 w-full min-w-0 flex-1 flex-col gap-5 overflow-hidden">
 
         {/* Page Header */}
-        <div className="flex items-center justify-between">
+        <div className="flex shrink-0 items-center justify-between">
           <div>
             <h1 className="text-2xl font-semibold tracking-tight text-slate-900">Leads</h1>
             <p className="mt-0.5 text-sm text-slate-500">Import, route, and execute calls against pending leads.</p>
@@ -534,8 +535,8 @@ export default function LeadsPage() {
         </div>
 
         {/* Device Status Bar */}
-        <div className="rounded-xl border border-slate-200 bg-white shadow-sm">
-          <div className="flex flex-wrap items-center gap-2 px-4 py-3">
+        <div className="shrink-0 rounded-xl border border-slate-200 bg-white shadow-sm">
+          <div className="flex flex-wrap items-center gap-2.5 px-4 py-3.5 sm:px-5">
             {/* Device ready pill */}
             <span
               className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium ${
@@ -585,6 +586,10 @@ export default function LeadsPage() {
               <span className={`h-1.5 w-1.5 rounded-full ${autoDialEnabled ? "bg-white" : "bg-slate-400"}`} />
               Auto Dial {autoDialEnabled ? "On" : "Off"}
             </button>
+          </div>
+
+          <div className="border-t border-slate-100 px-4 py-2.5 sm:px-5">
+            <TwilioMicSelector maxWidthClass="max-w-full" />
           </div>
 
           {/* Device error */}
@@ -660,8 +665,8 @@ export default function LeadsPage() {
         </div>
 
         {/* Add Lead Form */}
-        <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-          <h2 className="mb-3 text-xs font-semibold uppercase tracking-wider text-slate-400">Add Lead</h2>
+        <div className="shrink-0 rounded-xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
+          <h2 className="mb-3.5 text-xs font-semibold uppercase tracking-wider text-slate-400">Add Lead</h2>
           <form onSubmit={addLead} className="flex flex-wrap items-end gap-3">
             <div className="flex min-w-0 flex-1 flex-col gap-1" style={{ minWidth: "160px" }}>
               <label className="text-xs font-medium text-slate-500">Name</label>
@@ -707,14 +712,14 @@ export default function LeadsPage() {
 
         {/* Error Banner */}
         {error && (
-          <div className="flex items-center gap-2 rounded-lg border border-rose-200 bg-rose-50 px-4 py-2.5 text-sm font-medium text-rose-700">
+          <div className="flex shrink-0 items-center gap-2 rounded-lg border border-rose-200 bg-rose-50 px-4 py-2.5 text-sm font-medium text-rose-700">
             <svg className="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
             {error}
           </div>
         )}
 
         {/* Search and Sort */}
-        <div className="flex flex-col gap-3 rounded-xl border border-slate-200 bg-white p-4 shadow-sm sm:flex-row sm:items-end sm:justify-between">
+        <div className="flex shrink-0 flex-col gap-3 rounded-xl border border-slate-200 bg-white p-4 shadow-sm sm:flex-row sm:items-end sm:justify-between sm:p-5">
           <div className="flex min-w-0 flex-1 flex-col gap-1">
             <label htmlFor="lead-search" className="text-xs font-medium text-slate-500">Search leads</label>
             <div className="relative">
@@ -777,8 +782,9 @@ export default function LeadsPage() {
           </p>
         </div>
 
-        {/* Leads Table */}
-        <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
+        {/* Leads Table — only this region scrolls */}
+        <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden">
+        <div className="min-h-0 flex-1 overflow-auto rounded-xl border border-slate-200 bg-white shadow-sm sm:min-h-72">
           <table className="min-w-full text-sm">
             <thead>
               <tr className="border-b border-slate-200 bg-slate-50">
@@ -900,7 +906,7 @@ export default function LeadsPage() {
 
         {/* Pagination */}
         {filteredAndSortedLeads.length > LEADS_PER_PAGE && (
-          <div className="flex items-center justify-between rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
+          <div className="flex shrink-0 items-center justify-between rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
             <p className="text-sm text-slate-500">
               Showing{" "}
               <span className="font-semibold text-slate-800">{pageStart + 1}</span>–
@@ -929,6 +935,7 @@ export default function LeadsPage() {
             </div>
           </div>
         )}
+        </div>
       </section>
 
       {/* Delete Confirmation Modal */}

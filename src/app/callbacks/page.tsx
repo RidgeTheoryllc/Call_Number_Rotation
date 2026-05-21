@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AppShell } from "@/components/app-shell";
 import { CallbackSchedulePicker } from "@/components/callback-schedule-picker";
 import { useTwilioDeviceContext } from "@/components/twilio-device-provider";
+import { TwilioMicSelector } from "@/components/twilio-mic-selector";
 import { useWorkspaceDataCache } from "@/components/workspace-data-cache";
 import { isoToDatetimeLocalValue, isSameLocalCalendarDay } from "@/lib/callback-schedule";
 import { getSupabaseBrowserClient } from "@/lib/supabase";
@@ -331,6 +332,22 @@ export default function CallbacksPage() {
         {error ? (
           <div className="rounded-lg border border-rose-200 bg-rose-50 px-4 py-2.5 text-sm font-medium text-rose-700">{error}</div>
         ) : null}
+
+        <div className="rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
+          <span
+            className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium ${
+              deviceReady
+                ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                : "border-rose-200 bg-rose-50 text-rose-700"
+            }`}
+          >
+            <span className={`h-1.5 w-1.5 rounded-full ${deviceReady ? "bg-emerald-500" : "bg-rose-500"}`} />
+            {deviceReady ? "Dialer ready" : "Dialer not ready"}
+          </span>
+          <div className="mt-3 border-t border-slate-100 pt-3">
+            <TwilioMicSelector maxWidthClass="max-w-xl" />
+          </div>
+        </div>
 
         <div className="flex flex-col gap-3 rounded-xl border border-slate-200 bg-white p-4 shadow-sm sm:flex-row sm:flex-wrap sm:items-end sm:justify-between">
           <div className="flex min-w-0 flex-1 flex-col gap-1">

@@ -4,6 +4,7 @@ import Link from "next/link";
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Call } from "@twilio/voice-sdk";
 import { AppShell } from "@/components/app-shell";
+import { TwilioMicSelector } from "@/components/twilio-mic-selector";
 import { useTwilioDeviceContext } from "@/components/twilio-device-provider";
 import { getSupabaseBrowserClient } from "@/lib/supabase";
 import { normalizePhone } from "@/lib/utils";
@@ -525,6 +526,21 @@ export default function ConnectCallPage() {
               >
                 Callbacks
               </Link>
+            </div>
+          </div>
+          <div className="mt-4 border-t border-slate-200/80 pt-4">
+            <span
+              className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium ${
+                deviceReady
+                  ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                  : "border-rose-200 bg-rose-50 text-rose-700"
+              }`}
+            >
+              <span className={`h-1.5 w-1.5 rounded-full ${deviceReady ? "bg-emerald-500" : "bg-rose-500"}`} />
+              {deviceReady ? "Dialer ready" : "Dialer not ready"}
+            </span>
+            <div className="mt-3">
+              <TwilioMicSelector maxWidthClass="max-w-xl" />
             </div>
           </div>
         </section>

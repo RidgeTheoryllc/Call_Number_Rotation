@@ -1,15 +1,46 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Call, Device } from "@twilio/voice-sdk";
+import { Call, Device, type AudioHelper } from "@twilio/voice-sdk";
+import {
+  readPreferredMicId,
+  TWILIO_AUDIO_TRACK_CONSTRAINTS,
+  TWILIO_RTC_CONSTRAINTS,
+  writePreferredMicId,
+} from "@/lib/twilio-audio";
 
 type TwilioCallStatus = "idle" | "registering" | "ready" | "ringing" | "in-progress" | "completed" | "error";
+
+export type TwilioInputDeviceOption = {
+  deviceId: string;
+  label: string;
+};
 
 export interface UseTwilioDeviceOptions {
   /** Auto-accept incoming client legs (click-to-call, QA listen). */
   autoAcceptIncoming?: boolean;
   /** Mute microphone when an auto-accepted or manually accepted call connects. */
   muteOnConnect?: boolean;
+}
+
+function listInputDevices(audio: AudioHelper): TwilioInputDeviceOption[] {
+  return Array.from(audio.availableInputDevices.values()).map((device, index) => ({
+    deviceId: device.deviceId,
+    label: device.label?.trim() || `Microphone ${index + 1}`,
+  }));
+}
+
+async function applyAudioEnhancements(audio: AudioHelper): Promise<void> {
+  await audio.setAudioConstraints(TWILIO_AUDIO_TRACK_CONSTRAINTS);
+}
+
+async function applyPreferredMic(audio: AudioHelper, deviceId: string | null): Promise<string | null> {
+  if (!deviceId || !audio.availableInputDevices.has(deviceId)) {
+    return audio.inputDevice?.deviceId ?? null;
+  }
+  await audio.setInputDevice(deviceId);
+  writePreferredMicId(deviceId);
+  return deviceId;
 }
 
 export function useTwilioDevice(identityHint?: string, options?: UseTwilioDeviceOptions) {
@@ -21,15 +52,60 @@ export function useTwilioDevice(identityHint?: string, options?: UseTwilioDevice
   const [activeCall, setActiveCall] = useState<Call | null>(null);
   const [callStatus, setCallStatus] = useState<TwilioCallStatus>("idle");
   const [deviceError, setDeviceError] = useState<string>("");
+  const [inputDevices, setInputDevices] = useState<TwilioInputDeviceOption[]>([]);
+  const [selectedInputDeviceId, setSelectedInputDeviceId] = useState("");
+  const [audioSetupError, setAudioSetupError] = useState("");
   /** Prevents double `accept()` (Strict Mode / duplicate effects), which drops the call immediately. */
   const acceptedIncomingCallRef = useRef<Call | null>(null);
   /** When > Date.now(), the next incoming client leg is auto-accepted as click-to-call (PSTN inbound leaves this cleared). */
   const outboundClientLegExpectUntilMsRef = useRef(0);
+  const audioHelperRef = useRef<AudioHelper | null>(null);
 
   const resolvedIdentity = useMemo(() => {
     if (identityHint?.trim()) return identityHint.trim();
     return "";
   }, [identityHint]);
+
+  const refreshInputDevices = useCallback(() => {
+    const audio = audioHelperRef.current;
+    if (!audio) return;
+    const listed = listInputDevices(audio);
+    setInputDevices(listed);
+    const activeId = audio.inputDevice?.deviceId ?? listed[0]?.deviceId ?? "";
+    setSelectedInputDeviceId(activeId);
+  }, []);
+
+  const setupAudioHelper = useCallback(async (audio: AudioHelper) => {
+    audioHelperRef.current = audio;
+    setAudioSetupError("");
+    try {
+      await applyAudioEnhancements(audio);
+      refreshInputDevices();
+      const preferred = readPreferredMicId();
+      const applied = await applyPreferredMic(audio, preferred);
+      if (applied) {
+        setSelectedInputDeviceId(applied);
+      }
+    } catch (error) {
+      setAudioSetupError(
+        error instanceof Error ? error.message : "Could not apply microphone noise reduction",
+      );
+    }
+  }, [refreshInputDevices]);
+
+  const acceptOptions = useMemo(
+    () => ({ rtcConstraints: TWILIO_RTC_CONSTRAINTS }),
+    [],
+  );
+
+  const acceptCall = useCallback(
+    (call: Call) => {
+      if (acceptedIncomingCallRef.current === call) return;
+      acceptedIncomingCallRef.current = call;
+      call.accept(acceptOptions);
+    },
+    [acceptOptions],
+  );
 
   useEffect(() => {
     if (!resolvedIdentity) {
@@ -38,6 +114,7 @@ export function useTwilioDevice(identityHint?: string, options?: UseTwilioDevice
 
     let isCancelled = false;
     let mountedDevice: Device | null = null;
+    let audioDeviceChangeHandler: ((...args: unknown[]) => void) | null = null;
 
     const initialize = async () => {
       try {
@@ -68,6 +145,14 @@ export function useTwilioDevice(identityHint?: string, options?: UseTwilioDevice
           if (isCancelled) return;
           setDeviceReady(true);
           setCallStatus("ready");
+          const audio = mountedDevice?.audio;
+          if (audio) {
+            void setupAudioHelper(audio);
+            audioDeviceChangeHandler = () => {
+              refreshInputDevices();
+            };
+            audio.on("deviceChange", audioDeviceChangeHandler);
+          }
         });
 
         mountedDevice.on("incoming", (incomingCall) => {
@@ -108,10 +193,7 @@ export function useTwilioDevice(identityHint?: string, options?: UseTwilioDevice
             (expectUntil > 0 && Date.now() < expectUntil) || autoAcceptIncoming;
           if (shouldAutoAccept) {
             outboundClientLegExpectUntilMsRef.current = 0;
-            if (acceptedIncomingCallRef.current !== incomingCall) {
-              acceptedIncomingCallRef.current = incomingCall;
-              incomingCall.accept();
-            }
+            acceptCall(incomingCall);
           }
         });
 
@@ -146,6 +228,11 @@ export function useTwilioDevice(identityHint?: string, options?: UseTwilioDevice
 
     return () => {
       isCancelled = true;
+      const audio = audioHelperRef.current;
+      if (audio && audioDeviceChangeHandler) {
+        audio.removeListener("deviceChange", audioDeviceChangeHandler);
+      }
+      audioHelperRef.current = null;
       if (mountedDevice) {
         mountedDevice.destroy();
       }
@@ -153,8 +240,11 @@ export function useTwilioDevice(identityHint?: string, options?: UseTwilioDevice
       setActiveCall(null);
       setDeviceReady(false);
       setCallStatus("idle");
+      setInputDevices([]);
+      setSelectedInputDeviceId("");
+      setAudioSetupError("");
     };
-  }, [autoAcceptIncoming, muteOnConnect, resolvedIdentity]);
+  }, [acceptCall, autoAcceptIncoming, muteOnConnect, refreshInputDevices, resolvedIdentity, setupAudioHelper]);
 
   useEffect(() => {
     if (!activeCall) {
@@ -172,10 +262,8 @@ export function useTwilioDevice(identityHint?: string, options?: UseTwilioDevice
 
   const answerIncomingCall = useCallback(() => {
     if (!activeCall || callStatus !== "ringing") return;
-    if (acceptedIncomingCallRef.current === activeCall) return;
-    acceptedIncomingCallRef.current = activeCall;
-    activeCall.accept();
-  }, [activeCall, callStatus]);
+    acceptCall(activeCall);
+  }, [acceptCall, activeCall, callStatus]);
 
   const rejectIncomingCall = useCallback(() => {
     if (!activeCall || callStatus !== "ringing") return;
@@ -186,6 +274,26 @@ export function useTwilioDevice(identityHint?: string, options?: UseTwilioDevice
     if (!activeCall) return;
     activeCall.mute(muted);
   }, [activeCall]);
+
+  const setSelectedInputDeviceIdHandler = useCallback(
+    async (deviceId: string) => {
+      const audio = audioHelperRef.current;
+      if (!audio || !deviceId) return;
+      if (callStatus === "ringing" || callStatus === "in-progress") {
+        setAudioSetupError("Hang up before changing microphone.");
+        return;
+      }
+      setAudioSetupError("");
+      try {
+        await applyPreferredMic(audio, deviceId);
+        setSelectedInputDeviceId(deviceId);
+        refreshInputDevices();
+      } catch (error) {
+        setAudioSetupError(error instanceof Error ? error.message : "Could not switch microphone");
+      }
+    },
+    [callStatus, refreshInputDevices],
+  );
 
   const signalOutboundClientLegExpected = useCallback(() => {
     outboundClientLegExpectUntilMsRef.current = Date.now() + 25_000;
@@ -202,6 +310,10 @@ export function useTwilioDevice(identityHint?: string, options?: UseTwilioDevice
     activeCall,
     callStatus,
     deviceError,
+    inputDevices,
+    selectedInputDeviceId,
+    setSelectedInputDeviceId: setSelectedInputDeviceIdHandler,
+    audioSetupError,
     hangup,
     answerIncomingCall,
     rejectIncomingCall,
