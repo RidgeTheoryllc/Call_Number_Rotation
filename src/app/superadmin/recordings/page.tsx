@@ -130,7 +130,10 @@ export default function SuperadminRecordingsPage() {
 
   useEffect(() => {
     if (!userId || profile?.role !== "superadmin") return;
-    void loadRecordings();
+    const timerId = window.setTimeout(() => {
+      void loadRecordings();
+    }, 0);
+    return () => window.clearTimeout(timerId);
   }, [loadRecordings, profile?.role, userId]);
 
   const agentOptions = useMemo(() => {

@@ -48,7 +48,9 @@ export default function SuperadminLiveCallsPage() {
     deviceReady,
     deviceError,
     callStatus,
+    activeCall,
     hangup,
+    rejectIncomingCall,
     signalOutboundClientLegExpected,
   } = useTwilioDeviceContext();
 
@@ -125,45 +127,64 @@ export default function SuperadminLiveCallsPage() {
 
   useEffect(() => {
     if (!userId || profile?.role !== "superadmin") return;
-    void loadActiveCalls();
+    const timerId = window.setTimeout(() => {
+      void loadActiveCalls();
+    }, 0);
     const intervalId = window.setInterval(() => void loadActiveCalls(), 5000);
-    return () => window.clearInterval(intervalId);
+    return () => {
+      window.clearTimeout(timerId);
+      window.clearInterval(intervalId);
+    };
   }, [loadActiveCalls, profile?.role, userId]);
 
   useEffect(() => {
     if (!isListening || !listenStartedAt) {
-      setListenSeconds(0);
-      return;
+      const timerId = window.setTimeout(() => setListenSeconds(0), 0);
+      return () => window.clearTimeout(timerId);
     }
     const tick = () => {
       setListenSeconds(Math.floor((Date.now() - listenStartedAt) / 1000));
     };
-    tick();
+    const timerId = window.setTimeout(tick, 0);
     const intervalId = window.setInterval(tick, 1000);
-    return () => window.clearInterval(intervalId);
+    return () => {
+      window.clearTimeout(timerId);
+      window.clearInterval(intervalId);
+    };
   }, [isListening, listenStartedAt]);
 
   useEffect(() => {
-    if (
-      listeningConference &&
-      (callStatus === "ready" || callStatus === "completed" || callStatus === "idle")
-    ) {
-      setListeningConference(null);
-      setConnectingConference(null);
-      setListenStartedAt(null);
-    }
-    if (callStatus === "in-progress" && listeningConference) {
-      setConnectingConference(null);
-      setListenStartedAt((prev) => prev ?? Date.now());
-    }
+    const timerId = window.setTimeout(() => {
+      if (
+        listeningConference &&
+        (callStatus === "ready" || callStatus === "completed" || callStatus === "idle")
+      ) {
+        setListeningConference(null);
+        setConnectingConference(null);
+        setListenStartedAt(null);
+      }
+      if (callStatus === "in-progress" && listeningConference) {
+        setConnectingConference(null);
+        setListenStartedAt((prev) => prev ?? Date.now());
+      }
+    }, 0);
+    return () => window.clearTimeout(timerId);
   }, [callStatus, listeningConference]);
 
-  const handleStopListen = useCallback(() => {
-    hangup();
+  const clearListenState = useCallback(() => {
     setListeningConference(null);
     setConnectingConference(null);
     setListenStartedAt(null);
-  }, [hangup]);
+  }, []);
+
+  const handleCancelListen = useCallback(() => {
+    if (activeCall && callStatus === "ringing") {
+      rejectIncomingCall();
+    } else {
+      hangup();
+    }
+    clearListenState();
+  }, [activeCall, callStatus, clearListenState, hangup, rejectIncomingCall]);
 
   const handleListen = useCallback(
     async (row: ActiveConferenceSessionRow) => {
@@ -171,7 +192,7 @@ export default function SuperadminLiveCallsPage() {
       if (isListening || isConnecting) return;
 
       if (listeningConference && listeningConference !== row.conference_name) {
-        handleStopListen();
+        handleCancelListen();
       }
 
       setConnectingConference(row.conference_name);
@@ -203,7 +224,7 @@ export default function SuperadminLiveCallsPage() {
     },
     [
       deviceReady,
-      handleStopListen,
+      handleCancelListen,
       isConnecting,
       isListening,
       listeningConference,
@@ -267,13 +288,13 @@ export default function SuperadminLiveCallsPage() {
                 ? `Monitor leg active · ${formatDuration(listenSeconds)} · You are muted on both sides.`
                 : "When you click Listen, this browser answers automatically and joins the conference silently."}
           </p>
-          {isListening ? (
+          {isListening || isConnecting ? (
             <button
               type="button"
-              onClick={handleStopListen}
+              onClick={handleCancelListen}
               className="mt-4 rounded-lg border border-rose-500/50 bg-rose-600 px-4 py-2 text-sm font-medium text-white hover:bg-rose-500"
             >
-              Stop listening
+              Cancel listen
             </button>
           ) : null}
         </div>
@@ -329,12 +350,18 @@ export default function SuperadminLiveCallsPage() {
                 </tr>
               ) : (
                 calls.map((row) => {
-                  const isRowListening = listeningConference === row.conference_name && isListening;
-                  const isRowConnecting = connectingConference === row.conference_name && isConnecting;
-                  const listenDisabled = !deviceReady || !conferenceEnabled || (isConnecting && !isRowConnecting);
+                  const isActiveRow = listeningConference === row.conference_name;
+                  const isRowListening = isActiveRow && isListening;
+                  const isRowConnecting = isActiveRow && isConnecting && !isRowListening;
+                  const anotherRowActive =
+                    (isConnecting || isListening) && listeningConference !== null && !isActiveRow;
+                  const listenDisabled = !deviceReady || !conferenceEnabled || anotherRowActive;
 
                   return (
-                    <tr key={row.id} className="border-t border-slate-800/80">
+                    <tr
+                      key={row.id}
+                      className={`border-t border-slate-800/80 ${isActiveRow && (isRowListening || isRowConnecting) ? "bg-violet-950/20" : ""}`}
+                    >
                       <td className="px-4 py-3">
                         <InCallBadge />
                       </td>
@@ -345,22 +372,43 @@ export default function SuperadminLiveCallsPage() {
                         {new Date(row.created_at).toLocaleTimeString()}
                       </td>
                       <td className="px-4 py-3">
-                        {isRowListening ? (
-                          <button
-                            type="button"
-                            onClick={handleStopListen}
-                            className="rounded-lg bg-rose-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-rose-500"
-                          >
-                            Stop
-                          </button>
+                        {isRowListening || isRowConnecting ? (
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span
+                              className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-semibold ring-1 ${
+                                isRowListening
+                                  ? "bg-emerald-500/15 text-emerald-300 ring-emerald-500/40"
+                                  : "bg-amber-500/15 text-amber-200 ring-amber-500/40"
+                              }`}
+                            >
+                              {isRowListening ? (
+                                <>
+                                  <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-400" aria-hidden />
+                                  Listening
+                                </>
+                              ) : (
+                                <>
+                                  <span className="h-3 w-3 animate-spin rounded-full border-2 border-amber-400/30 border-t-amber-300" aria-hidden />
+                                  Connecting…
+                                </>
+                              )}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={handleCancelListen}
+                              className="rounded-lg border border-slate-600 bg-slate-800 px-3 py-1.5 text-xs font-semibold text-slate-200 transition hover:border-rose-500/50 hover:bg-rose-600 hover:text-white"
+                            >
+                              Cancel
+                            </button>
+                          </div>
                         ) : (
                           <button
                             type="button"
                             onClick={() => void handleListen(row)}
-                            disabled={listenDisabled || isListening}
-                            className="rounded-lg bg-violet-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-violet-500 disabled:cursor-not-allowed disabled:opacity-50"
+                            disabled={listenDisabled}
+                            className="rounded-lg bg-violet-600 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-violet-500 disabled:cursor-not-allowed disabled:opacity-50"
                           >
-                            {isRowConnecting ? "Connecting..." : "Listen"}
+                            Listen
                           </button>
                         )}
                       </td>

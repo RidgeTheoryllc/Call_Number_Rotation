@@ -103,7 +103,10 @@ export default function SuperadminPage() {
 
   useEffect(() => {
     if (!userId || profile?.role !== "superadmin") return;
-    void loadStats();
+    const timerId = window.setTimeout(() => {
+      void loadStats();
+    }, 0);
+    return () => window.clearTimeout(timerId);
   }, [loadStats, profile?.role, userId]);
 
   const applyPresetHours = (hours: number) => {

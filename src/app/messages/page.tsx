@@ -178,21 +178,27 @@ export default function MessagesPage() {
 
   useEffect(() => {
     if (!userId) return;
-    setReadThroughByConvId(loadMessageReadThrough(userId));
+    const timerId = window.setTimeout(() => {
+      setReadThroughByConvId(loadMessageReadThrough(userId));
+    }, 0);
+    return () => window.clearTimeout(timerId);
   }, [userId]);
 
   useEffect(() => {
     const conv = selectedConversation;
     if (!conv?.id || !userId) return;
 
-    const readThrough = readThroughForConversation(conv.messages);
-    setReadThroughByConvId((prev) => {
-      const current = prev[conv.id] ?? 0;
-      if (readThrough <= current) return prev;
-      const next = { ...prev, [conv.id]: readThrough };
-      saveMessageReadThrough(userId, next);
-      return next;
-    });
+    const timerId = window.setTimeout(() => {
+      const readThrough = readThroughForConversation(conv.messages);
+      setReadThroughByConvId((prev) => {
+        const current = prev[conv.id] ?? 0;
+        if (readThrough <= current) return prev;
+        const next = { ...prev, [conv.id]: readThrough };
+        saveMessageReadThrough(userId, next);
+        return next;
+      });
+    }, 0);
+    return () => window.clearTimeout(timerId);
   }, [selectedConversation, userId]);
 
   const loadMessages = useCallback(
