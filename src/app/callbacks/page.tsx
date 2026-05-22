@@ -45,8 +45,10 @@ export default function CallbacksPage() {
   const [toast, setToast] = useState<{ tone: "success" | "warn"; message: string } | null>(null);
   const [isMuted, setIsMuted] = useState(false);
   const [callDurationSeconds, setCallDurationSeconds] = useState(0);
+  const [activeLeadCall, setActiveLeadCall] = useState<{ name: string; phone: string } | null>(null);
   /** True while POST /api/twilio/call has not yet produced a ringing/in-progress client leg. */
   const awaitingTwilioClientLegRef = useRef(false);
+  const clearActiveLeadCallTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const {
     identity,
@@ -62,7 +64,9 @@ export default function CallbacksPage() {
   } = useTwilioDeviceContext();
   const workspaceCache = useWorkspaceDataCache();
   const showCallControls = callStatus === "ringing" || callStatus === "in-progress";
-  const incomingCaller = callStatus === "ringing" ? activeCall?.parameters.From ?? activeCall?.parameters.Caller : null;
+  const isInboundRinging = callStatus === "ringing" && !activeLeadCall;
+  const incomingCaller = isInboundRinging ? activeCall?.parameters.From ?? activeCall?.parameters.Caller : null;
+  const activeLeadCallLabel = callStatus === "in-progress" ? "On call with" : "Connecting to";
   const supabase = getSupabaseBrowserClient();
 
   const formatDuration = (seconds: number) => {
@@ -199,6 +203,7 @@ export default function CallbacksPage() {
       setCallingLeadIds((prev) => ({ ...prev, [lead.id]: true }));
       setError("");
       setCallDurationSeconds(0);
+      setActiveLeadCall({ name: lead.name, phone: lead.phone });
       try {
         const rotateRes = await fetch("/api/rotate-did", {
           method: "POST",
@@ -209,6 +214,7 @@ export default function CallbacksPage() {
         if (!rotateRes.ok) {
           clearOutboundClientLegExpected();
           awaitingTwilioClientLegRef.current = false;
+          setActiveLeadCall(null);
           setError(rotateData.error ?? "Failed to rotate DID.");
           return;
         }
@@ -227,6 +233,7 @@ export default function CallbacksPage() {
         if (!callRes.ok) {
           clearOutboundClientLegExpected();
           awaitingTwilioClientLegRef.current = false;
+          setActiveLeadCall(null);
           setError(callData.error ?? "Call failed.");
           return;
         }
@@ -239,6 +246,7 @@ export default function CallbacksPage() {
       } catch {
         clearOutboundClientLegExpected();
         awaitingTwilioClientLegRef.current = false;
+        setActiveLeadCall(null);
         setError("Call setup failed. Check your connection and try again.");
       } finally {
         setCallingLeadIds((prev) => ({ ...prev, [lead.id]: false }));
@@ -246,6 +254,28 @@ export default function CallbacksPage() {
     },
     [callingLeadIds, clearOutboundClientLegExpected, identity, load, signalOutboundClientLegExpected, userId],
   );
+
+  useEffect(() => {
+    if (callStatus === "ringing" || callStatus === "in-progress") return;
+    if (activeCall) return;
+    if (awaitingTwilioClientLegRef.current) return;
+
+    if (clearActiveLeadCallTimeoutRef.current) {
+      clearTimeout(clearActiveLeadCallTimeoutRef.current);
+    }
+    clearActiveLeadCallTimeoutRef.current = setTimeout(() => {
+      clearActiveLeadCallTimeoutRef.current = null;
+      if (awaitingTwilioClientLegRef.current) return;
+      setActiveLeadCall(null);
+    }, 0);
+
+    return () => {
+      if (clearActiveLeadCallTimeoutRef.current) {
+        clearTimeout(clearActiveLeadCallTimeoutRef.current);
+        clearActiveLeadCallTimeoutRef.current = null;
+      }
+    };
+  }, [activeCall, callStatus]);
 
   useEffect(() => {
     if (callStatus === "ringing" || callStatus === "in-progress") return;
@@ -363,20 +393,99 @@ export default function CallbacksPage() {
           <div className="rounded-lg border border-rose-200 bg-rose-50 px-4 py-2.5 text-sm font-medium text-rose-700">{error}</div>
         ) : null}
 
-        <div className="rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
-          <span
-            className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium ${
-              deviceReady
-                ? "border-emerald-200 bg-emerald-50 text-emerald-700"
-                : "border-rose-200 bg-rose-50 text-rose-700"
-            }`}
-          >
-            <span className={`h-1.5 w-1.5 rounded-full ${deviceReady ? "bg-emerald-500" : "bg-rose-500"}`} />
-            {deviceReady ? "Dialer ready" : "Dialer not ready"}
-          </span>
-          <div className="mt-3 border-t border-slate-100 pt-3">
+        <div className="rounded-xl border border-slate-200 bg-white shadow-sm">
+          <div className="flex flex-wrap items-center gap-2.5 px-4 py-3.5 sm:px-5">
+            <span
+              className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium ${
+                deviceReady
+                  ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                  : "border-rose-200 bg-rose-50 text-rose-700"
+              }`}
+            >
+              <span className={`h-1.5 w-1.5 rounded-full ${deviceReady ? "bg-emerald-500" : "bg-rose-500"}`} />
+              {deviceReady ? "Dialer ready" : "Dialer not ready"}
+            </span>
+            <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-600">
+              {callStatus}
+            </span>
+            {callStatus === "in-progress" ? (
+              <span className="inline-flex items-center gap-1 rounded-full bg-indigo-50 px-2.5 py-1 text-xs font-medium text-indigo-700">
+                {formatDuration(callDurationSeconds)}
+              </span>
+            ) : null}
+          </div>
+          <div className="border-t border-slate-100 px-4 py-2.5 sm:px-5">
             <TwilioMicSelector maxWidthClass="max-w-xl" />
           </div>
+          {activeLeadCall ? (
+            <div className="border-t border-indigo-100 bg-indigo-50/60 px-4 py-2 sm:px-5">
+              <p className="text-xs font-medium text-slate-600">
+                {activeLeadCallLabel}{" "}
+                <span className="font-semibold text-slate-900">{activeLeadCall.name}</span> at{" "}
+                <span className="tabular-nums font-semibold text-slate-900">{activeLeadCall.phone}</span>
+              </p>
+            </div>
+          ) : null}
+          {showCallControls ? (
+            <div className="border-t border-slate-100 px-4 py-2 sm:px-5">
+              {isInboundRinging ? (
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="mr-auto text-xs font-semibold text-slate-700">
+                    Incoming call{incomingCaller ? ` from ${incomingCaller}` : ""}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCallDurationSeconds(0);
+                      answerIncomingCall();
+                    }}
+                    disabled={!activeCall}
+                    className="inline-flex items-center gap-1.5 rounded-md bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-700 ring-1 ring-emerald-200 transition hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    Answer
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      rejectIncomingCall();
+                      setCallDurationSeconds(0);
+                    }}
+                    disabled={!activeCall}
+                    className="inline-flex items-center gap-1.5 rounded-md bg-rose-50 px-3 py-1.5 text-xs font-semibold text-rose-700 ring-1 ring-rose-200 transition hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    Decline
+                  </button>
+                </div>
+              ) : (
+                <div className="flex flex-wrap items-center gap-2">
+                  <div className="flex-1" />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const next = !isMuted;
+                      mute(next);
+                      setIsMuted(next);
+                    }}
+                    disabled={!activeCall}
+                    className="inline-flex items-center gap-1.5 rounded-md bg-amber-50 px-3 py-1.5 text-xs font-semibold text-amber-800 ring-1 ring-amber-200 transition hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {isMuted ? "Unmute" : "Mute"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      hangup();
+                      setCallDurationSeconds(0);
+                      setIsMuted(false);
+                    }}
+                    className="inline-flex items-center gap-1.5 rounded-md bg-rose-50 px-3 py-1.5 text-xs font-semibold text-rose-700 ring-1 ring-rose-200 transition hover:bg-rose-100"
+                  >
+                    Hang up
+                  </button>
+                </div>
+              )}
+            </div>
+          ) : null}
         </div>
 
         <div className="flex flex-col gap-3 rounded-xl border border-slate-200 bg-white p-4 shadow-sm sm:flex-row sm:flex-wrap sm:items-end sm:justify-between">
@@ -522,69 +631,6 @@ export default function CallbacksPage() {
           </table>
         </div>
 
-        {showCallControls ? (
-          <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-            {callStatus === "ringing" ? (
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="mr-auto text-xs font-semibold text-slate-700">
-                  Incoming call{incomingCaller ? ` from ${incomingCaller}` : ""}
-                </span>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setCallDurationSeconds(0);
-                    answerIncomingCall();
-                  }}
-                  disabled={!activeCall}
-                  className="inline-flex items-center gap-1.5 rounded-md bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-700 ring-1 ring-emerald-200 transition hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  Answer
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    rejectIncomingCall();
-                    setCallDurationSeconds(0);
-                  }}
-                  disabled={!activeCall}
-                  className="inline-flex items-center gap-1.5 rounded-md bg-rose-50 px-3 py-1.5 text-xs font-semibold text-rose-700 ring-1 ring-rose-200 transition hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  Decline
-                </button>
-              </div>
-            ) : (
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="inline-flex items-center gap-1 rounded-full bg-indigo-50 px-2.5 py-1 text-xs font-medium text-indigo-700">
-                  On call · {formatDuration(callDurationSeconds)}
-                </span>
-                <div className="flex-1" />
-                <button
-                  type="button"
-                  onClick={() => {
-                    const next = !isMuted;
-                    mute(next);
-                    setIsMuted(next);
-                  }}
-                  disabled={!activeCall}
-                  className="inline-flex items-center gap-1.5 rounded-md bg-amber-50 px-3 py-1.5 text-xs font-semibold text-amber-800 ring-1 ring-amber-200 transition hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  {isMuted ? "Unmute" : "Mute"}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    hangup();
-                    setCallDurationSeconds(0);
-                    setIsMuted(false);
-                  }}
-                  className="inline-flex items-center gap-1.5 rounded-md bg-rose-50 px-3 py-1.5 text-xs font-semibold text-rose-700 ring-1 ring-rose-200 transition hover:bg-rose-100"
-                >
-                  Hang up
-                </button>
-              </div>
-            )}
-          </div>
-        ) : null}
       </section>
 
       {scheduleLead ? (

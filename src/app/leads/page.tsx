@@ -93,6 +93,8 @@ export default function LeadsPage() {
   const autoDialLockRef = useRef(false);
   /** True while POST /api/twilio/call has not yet produced a ringing/in-progress client leg. */
   const awaitingTwilioClientLegRef = useRef(false);
+  const clearActiveLeadCallTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const leadsRef = useRef(leads);
   const latestInboundLogIdRef = useRef<string | null>(null);
   const {
     identity,
@@ -109,7 +111,10 @@ export default function LeadsPage() {
   } = useTwilioDeviceContext();
   const workspaceCache = useWorkspaceDataCache();
   const showCallControls = callStatus === "ringing" || callStatus === "in-progress";
-  const incomingCaller = callStatus === "ringing" ? activeCall?.parameters.From ?? activeCall?.parameters.Caller : null;
+  const isInboundRinging = callStatus === "ringing" && !activeLeadCall;
+  const incomingCaller = isInboundRinging ? activeCall?.parameters.From ?? activeCall?.parameters.Caller : null;
+  const activeLeadCallLabel =
+    callStatus === "in-progress" ? "On call with" : "Connecting to";
   const LEADS_PER_PAGE = 10;
   const supabase = getSupabaseBrowserClient();
 
@@ -173,6 +178,10 @@ export default function LeadsPage() {
     }, 1000);
     return () => window.clearInterval(timer);
   }, [callStatus]);
+
+  useEffect(() => {
+    leadsRef.current = leads;
+  }, [leads]);
 
   useEffect(() => {
     if (callStatus === "ringing" || callStatus === "in-progress") {
@@ -373,6 +382,7 @@ export default function LeadsPage() {
       if (!rotateRes.ok) {
         clearOutboundClientLegExpected();
         awaitingTwilioClientLegRef.current = false;
+        setActiveLeadCall(null);
         setError(rotateData.error ?? "Failed to rotate DID.");
         setAutoDialEnabled(false);
         return;
@@ -387,6 +397,7 @@ export default function LeadsPage() {
       if (!callRes.ok) {
         clearOutboundClientLegExpected();
         awaitingTwilioClientLegRef.current = false;
+        setActiveLeadCall(null);
         setError(callData.error ?? "Call failed.");
         setAutoDialEnabled(false);
         return;
@@ -402,6 +413,7 @@ export default function LeadsPage() {
     } catch {
       clearOutboundClientLegExpected();
       awaitingTwilioClientLegRef.current = false;
+      setActiveLeadCall(null);
       setError("Call setup failed. Check your connection and try again.");
     } finally {
       setCallingLeadIds((prev) => ({ ...prev, [lead.id]: false }));
@@ -412,9 +424,22 @@ export default function LeadsPage() {
     if (callStatus === "ringing" || callStatus === "in-progress") return;
     if (activeCall) return;
     if (awaitingTwilioClientLegRef.current) return;
-    window.setTimeout(() => {
+
+    if (clearActiveLeadCallTimeoutRef.current) {
+      clearTimeout(clearActiveLeadCallTimeoutRef.current);
+    }
+    clearActiveLeadCallTimeoutRef.current = setTimeout(() => {
+      clearActiveLeadCallTimeoutRef.current = null;
+      if (awaitingTwilioClientLegRef.current) return;
       setActiveLeadCall(null);
     }, 0);
+
+    return () => {
+      if (clearActiveLeadCallTimeoutRef.current) {
+        clearTimeout(clearActiveLeadCallTimeoutRef.current);
+        clearActiveLeadCallTimeoutRef.current = null;
+      }
+    };
   }, [activeCall, callStatus]);
 
   const deleteLead = useCallback(async (lead: LeadRecord) => {
@@ -495,18 +520,26 @@ export default function LeadsPage() {
     if (!autoDialEnabled) return;
     if (!userId || !identity || !deviceReady) return;
     if (activeCall) return;
+    if (awaitingTwilioClientLegRef.current) return;
     const shouldRun = callStatus === "idle" || callStatus === "ready" || callStatus === "completed";
     if (!shouldRun || isLoading) return;
     if (autoDialLockRef.current) return;
     const isDialing = Object.values(callingLeadIds).some(Boolean);
     if (isDialing) return;
-    const nextLead = leads.find((lead) => lead.status === "pending");
-    if (!nextLead) { window.setTimeout(() => { setAutoDialEnabled(false); }, 0); return; }
+    const nextLead = leadsRef.current.find((lead) => lead.status === "pending");
+    if (!nextLead) {
+      window.setTimeout(() => {
+        setAutoDialEnabled(false);
+      }, 0);
+      return;
+    }
     autoDialLockRef.current = true;
     window.setTimeout(() => {
-      void dialLead(nextLead).finally(() => { autoDialLockRef.current = false; });
+      void dialLead(nextLead).finally(() => {
+        autoDialLockRef.current = false;
+      });
     }, 0);
-  }, [activeCall, autoDialEnabled, callStatus, callingLeadIds, deviceReady, dialLead, identity, isLoading, leads, userId]);
+  }, [activeCall, autoDialEnabled, callStatus, callingLeadIds, deviceReady, dialLead, identity, isLoading, userId]);
 
   return (
     <AppShell>
@@ -592,6 +625,16 @@ export default function LeadsPage() {
             <TwilioMicSelector maxWidthClass="max-w-full" />
           </div>
 
+          {activeLeadCall ? (
+            <div className="border-t border-indigo-100 bg-indigo-50/60 px-4 py-2 sm:px-5">
+              <p className="text-xs font-medium text-slate-600">
+                {activeLeadCallLabel}{" "}
+                <span className="font-semibold text-slate-900">{activeLeadCall.name}</span> at{" "}
+                <span className="tabular-nums font-semibold text-slate-900">{activeLeadCall.phone}</span>
+              </p>
+            </div>
+          ) : null}
+
           {/* Device error */}
           {deviceError && (
             <div className="border-t border-slate-100 px-4 py-2">
@@ -602,7 +645,7 @@ export default function LeadsPage() {
           {/* In-call controls */}
           {showCallControls && (
             <div className="border-t border-slate-100 px-4 py-2">
-              {callStatus === "ringing" ? (
+              {isInboundRinging ? (
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="mr-auto text-xs font-semibold text-slate-700">
                     Incoming call{incomingCaller ? ` from ${incomingCaller}` : ""}
@@ -654,12 +697,6 @@ export default function LeadsPage() {
                   </button>
                 </div>
               )}
-              {activeLeadCall && callStatus !== "ringing" ? (
-                <p className="mt-2 text-xs font-medium text-slate-600">
-                  Calling <span className="text-slate-900">{activeLeadCall.name}</span> at{" "}
-                  <span className="text-slate-900">{activeLeadCall.phone}</span>
-                </p>
-              ) : null}
             </div>
           )}
         </div>
