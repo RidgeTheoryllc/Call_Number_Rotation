@@ -275,6 +275,14 @@ export function useTwilioDevice(identityHint?: string, options?: UseTwilioDevice
     activeCall.mute(muted);
   }, [activeCall]);
 
+  const sendDigits = useCallback(
+    (digits: string) => {
+      if (!activeCall || callStatus !== "in-progress") return;
+      activeCall.sendDigits(digits);
+    },
+    [activeCall, callStatus],
+  );
+
   const setSelectedInputDeviceIdHandler = useCallback(
     async (deviceId: string) => {
       const audio = audioHelperRef.current;
@@ -318,6 +326,7 @@ export function useTwilioDevice(identityHint?: string, options?: UseTwilioDevice
     answerIncomingCall,
     rejectIncomingCall,
     mute,
+    sendDigits,
     signalOutboundClientLegExpected,
     clearOutboundClientLegExpected,
   };

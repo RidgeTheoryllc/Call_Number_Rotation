@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AppShell } from "@/components/app-shell";
+import { CallKeypad } from "@/components/call-keypad";
 import { CallbackSchedulePicker } from "@/components/callback-schedule-picker";
 import { useTwilioDeviceContext } from "@/components/twilio-device-provider";
 import { TwilioMicSelector } from "@/components/twilio-mic-selector";
@@ -59,6 +60,7 @@ export default function CallbacksPage() {
     answerIncomingCall,
     rejectIncomingCall,
     mute,
+    sendDigits,
     signalOutboundClientLegExpected,
     clearOutboundClientLegExpected,
   } = useTwilioDeviceContext();
@@ -457,31 +459,42 @@ export default function CallbacksPage() {
                   </button>
                 </div>
               ) : (
-                <div className="flex flex-wrap items-center gap-2">
-                  <div className="flex-1" />
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const next = !isMuted;
-                      mute(next);
-                      setIsMuted(next);
-                    }}
-                    disabled={!activeCall}
-                    className="inline-flex items-center gap-1.5 rounded-md bg-amber-50 px-3 py-1.5 text-xs font-semibold text-amber-800 ring-1 ring-amber-200 transition hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    {isMuted ? "Unmute" : "Mute"}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      hangup();
-                      setCallDurationSeconds(0);
-                      setIsMuted(false);
-                    }}
-                    className="inline-flex items-center gap-1.5 rounded-md bg-rose-50 px-3 py-1.5 text-xs font-semibold text-rose-700 ring-1 ring-rose-200 transition hover:bg-rose-100"
-                  >
-                    Hang up
-                  </button>
+                <div className="flex flex-col gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
+                    {callStatus === "in-progress" ? (
+                      <CallKeypad
+                        userId={userId}
+                        activeCall={activeCall}
+                        sendClientDigits={sendDigits}
+                        disabled={!activeCall}
+                      />
+                    ) : null}
+                    <div className="ml-auto flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const next = !isMuted;
+                          mute(next);
+                          setIsMuted(next);
+                        }}
+                        disabled={!activeCall}
+                        className="inline-flex items-center gap-1.5 rounded-md bg-amber-50 px-3 py-1.5 text-xs font-semibold text-amber-800 ring-1 ring-amber-200 transition hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {isMuted ? "Unmute" : "Mute"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          hangup();
+                          setCallDurationSeconds(0);
+                          setIsMuted(false);
+                        }}
+                        className="inline-flex items-center gap-1.5 rounded-md bg-rose-50 px-3 py-1.5 text-xs font-semibold text-rose-700 ring-1 ring-rose-200 transition hover:bg-rose-100"
+                      >
+                        Hang up
+                      </button>
+                    </div>
+                  </div>
                 </div>
               )}
             </div>

@@ -2,23 +2,13 @@
 
 import Link from "next/link";
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { Call } from "@twilio/voice-sdk";
 import { AppShell } from "@/components/app-shell";
 import { TwilioMicSelector } from "@/components/twilio-mic-selector";
 import { useTwilioDeviceContext } from "@/components/twilio-device-provider";
 import { getSupabaseBrowserClient } from "@/lib/supabase";
+import { getAgentCallSid } from "@/lib/twilio-call";
 import { normalizePhone } from "@/lib/utils";
 import type { ConferenceParticipantRecord } from "@/types";
-
-function getAgentCallSid(call: Call | null): string | undefined {
-  if (!call) return undefined;
-  const params = call.parameters ?? {};
-  const fromParams = params.CallSid ?? params.callSid;
-  if (typeof fromParams === "string" && fromParams.length > 0) return fromParams;
-  const outboundId = (call as Call & { outboundConnectionId?: string }).outboundConnectionId;
-  if (typeof outboundId === "string" && outboundId.length > 0) return outboundId;
-  return undefined;
-}
 
 function isValidDialablePhone(phone: string): boolean {
   const digits = normalizePhone(phone).replace(/\D/g, "");

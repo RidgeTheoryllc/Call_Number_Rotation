@@ -1,6 +1,7 @@
 import twilio from "twilio";
 import { buildRecordingStatusCallbackUrl } from "@/lib/call-recording";
 import { getSupabaseServerClient } from "@/lib/supabase";
+import { normalizeSendDigits } from "@/lib/twilio-call";
 import { normalizePhone } from "@/lib/utils";
 
 export function isConferenceCallsEnabled(): boolean {
@@ -430,6 +431,71 @@ export async function setConferenceLeadCallSid(conferenceName: string, leadCallS
     .update({ lead_call_sid: leadCallSid })
     .eq("conference_name", conferenceName)
     .eq("status", "active");
+}
+
+export type SendDigitsToLeadResult =
+  | { ok: true; mode: "conference_lead" }
+  | { ok: false; fallback: "client"; message?: string };
+
+/** Sends DTMF to the PSTN lead leg when conference mode is active; otherwise use client SDK. */
+export async function sendDigitsToLeadLeg(input: {
+  userId: string;
+  agentCallSid?: string | null;
+  digits: string;
+}): Promise<SendDigitsToLeadResult> {
+  const digits = normalizeSendDigits(input.digits);
+  if (!digits) {
+    throw new Error("Invalid DTMF. Use 0-9, *, #, or w for pause.");
+  }
+
+  if (!isConferenceCallsEnabled()) {
+    return { ok: false, fallback: "client" };
+  }
+
+  const resolved = await resolveConferenceSessionForConnect({
+    userId: input.userId,
+    agentCallSid: input.agentCallSid,
+  });
+  if (!resolved.ok) {
+    return { ok: false, fallback: "client", message: resolved.message };
+  }
+
+  const session = resolved.session;
+  const leadSid =
+    (session.lead_call_sid as string | null) ??
+    (session.direction === "inbound" ? (session.parent_call_sid as string | null) : null);
+
+  if (!leadSid?.trim()) {
+    return { ok: false, fallback: "client", message: "Lead line is not ready yet. Try again in a moment." };
+  }
+
+  await sendDigitsOnCallLeg(leadSid, digits);
+  return { ok: true, mode: "conference_lead" };
+}
+
+/** Twilio REST SendDigits on an in-progress call (Node SDK types omit this on update). */
+async function sendDigitsOnCallLeg(callSid: string, digits: string): Promise<void> {
+  const accountSid = process.env.TWILIO_ACCOUNT_SID;
+  const authToken = process.env.TWILIO_AUTH_TOKEN;
+  if (!accountSid || !authToken) {
+    throw new Error("Missing TWILIO_ACCOUNT_SID or TWILIO_AUTH_TOKEN");
+  }
+
+  const url = `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Calls/${encodeURIComponent(callSid)}.json`;
+  const credentials = Buffer.from(`${accountSid}:${authToken}`).toString("base64");
+  const res = await fetch(url, {
+    method: "POST",
+    headers: {
+      Authorization: `Basic ${credentials}`,
+      "Content-Type": "application/x-www-form-urlencoded",
+    },
+    body: new URLSearchParams({ SendDigits: digits }),
+  });
+
+  if (!res.ok) {
+    const detail = await res.text();
+    throw new Error(detail || `Twilio SendDigits failed (${res.status})`);
+  }
 }
 
 export function buildJoinConferenceTwiml(options: {
