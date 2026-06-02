@@ -1,10 +1,10 @@
 /** WebRTC mic constraints applied to agent browser calls.
- * Keep echo cancellation on, but avoid aggressive noise/AGC processing that can create "cave" artifacts.
+ * Match Teams-style voice leveling more closely by letting the browser boost and clean up mic input.
  */
 export const TWILIO_AUDIO_TRACK_CONSTRAINTS: MediaTrackConstraints = {
   echoCancellation: true,
-  noiseSuppression: false,
-  autoGainControl: false,
+  noiseSuppression: true,
+  autoGainControl: true,
 };
 
 export const TWILIO_RTC_CONSTRAINTS: MediaStreamConstraints = {

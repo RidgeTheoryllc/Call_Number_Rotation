@@ -139,6 +139,7 @@ export function useTwilioDevice(identityHint?: string, options?: UseTwilioDevice
         mountedDevice = new Device(tokenData.token, {
           closeProtection: true,
           codecPreferences: [Call.Codec.Opus, Call.Codec.PCMU],
+          edge: "singapore",
         });
 
         mountedDevice.on("registered", () => {
