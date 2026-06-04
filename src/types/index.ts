@@ -61,6 +61,7 @@ export interface DidRecord {
 export interface LeadRecord {
   id: string;
   name: string;
+  business_name?: string | null;
   phone: string;
   area_code: string;
   status: LeadStatus;

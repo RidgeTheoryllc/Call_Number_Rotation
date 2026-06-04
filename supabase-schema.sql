@@ -23,6 +23,7 @@ create table if not exists did_pool (
 create table if not exists leads (
   id uuid primary key default uuid_generate_v4(),
   name text not null,
+  business_name text,
   phone text not null,
   area_code text not null,
   status text not null default 'pending' check (status in ('pending', 'dialed', 'completed')),

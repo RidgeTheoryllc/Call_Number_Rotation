@@ -46,7 +46,11 @@ export default function CallbacksPage() {
   const [toast, setToast] = useState<{ tone: "success" | "warn"; message: string } | null>(null);
   const [isMuted, setIsMuted] = useState(false);
   const [callDurationSeconds, setCallDurationSeconds] = useState(0);
-  const [activeLeadCall, setActiveLeadCall] = useState<{ name: string; phone: string } | null>(null);
+  const [activeLeadCall, setActiveLeadCall] = useState<{
+    name: string;
+    businessName?: string | null;
+    phone: string;
+  } | null>(null);
   /** True while POST /api/twilio/call has not yet produced a ringing/in-progress client leg. */
   const awaitingTwilioClientLegRef = useRef(false);
   const clearActiveLeadCallTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -178,7 +182,7 @@ export default function CallbacksPage() {
     const q = searchQuery.trim().toLowerCase();
     const searched = q
       ? withCb.filter((lead) => {
-          const hay = [lead.name, lead.phone, lead.callback_notes, lead.callback_at]
+          const hay = [lead.name, lead.business_name, lead.phone, lead.callback_notes, lead.callback_at]
             .filter(Boolean)
             .join(" ")
             .toLowerCase();
@@ -205,7 +209,7 @@ export default function CallbacksPage() {
       setCallingLeadIds((prev) => ({ ...prev, [lead.id]: true }));
       setError("");
       setCallDurationSeconds(0);
-      setActiveLeadCall({ name: lead.name, phone: lead.phone });
+      setActiveLeadCall({ name: lead.name, businessName: lead.business_name, phone: lead.phone });
       try {
         const rotateRes = await fetch("/api/rotate-did", {
           method: "POST",
@@ -423,7 +427,16 @@ export default function CallbacksPage() {
             <div className="border-t border-indigo-100 bg-indigo-50/60 px-4 py-2 sm:px-5">
               <p className="text-xs font-medium text-slate-600">
                 {activeLeadCallLabel}{" "}
-                <span className="font-semibold text-slate-900">{activeLeadCall.name}</span> at{" "}
+                {activeLeadCall.businessName ? (
+                  <>
+                    <span className="font-semibold text-slate-900">{activeLeadCall.businessName}</span>{" "}
+                    (<span className="font-semibold text-slate-900">{activeLeadCall.name}</span>) at{" "}
+                  </>
+                ) : (
+                  <>
+                    <span className="font-semibold text-slate-900">{activeLeadCall.name}</span> at{" "}
+                  </>
+                )}
                 <span className="tabular-nums font-semibold text-slate-900">{activeLeadCall.phone}</span>
               </p>
             </div>

@@ -43,6 +43,7 @@ export async function POST(req: NextRequest) {
 
       return {
         name: (lead.name as string) ?? "Unknown",
+        business_name: (lead.business_name as string | undefined)?.trim() || null,
         phone,
         normalized_phone: normalizePhone(phone),
         area_code: extractAreaCode(phone),

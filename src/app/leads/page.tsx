@@ -89,7 +89,11 @@ export default function LeadsPage() {
   const [toast, setToast] = useState<{ tone: "success" | "warn"; message: string } | null>(null);
   const [isMuted, setIsMuted] = useState(false);
   const [callDurationSeconds, setCallDurationSeconds] = useState(0);
-  const [activeLeadCall, setActiveLeadCall] = useState<{ name: string; phone: string } | null>(null);
+  const [activeLeadCall, setActiveLeadCall] = useState<{
+    name: string;
+    businessName?: string | null;
+    phone: string;
+  } | null>(null);
   const [autoDialEnabled, setAutoDialEnabled] = useState(false);
   const autoDialLockRef = useRef(false);
   /** True while POST /api/twilio/call has not yet produced a ringing/in-progress client leg. */
@@ -144,6 +148,7 @@ export default function LeadsPage() {
       ? leads.filter((lead) => {
           const searchable = [
             lead.name,
+            lead.business_name,
             lead.phone,
             lead.area_code,
             lead.status,
@@ -328,15 +333,39 @@ export default function LeadsPage() {
     const valid = parsed.data
       .map((row) => {
         const phoneValue = pickField(row, ["phone", "phonenumber", "phone_number", "mobile", "telephone", "tel"]);
-        const nameValue = pickField(row, ["name", "fullname", "full_name", "firstname", "first_name"]);
+        const nameValue = pickField(row, [
+          "name",
+          "fullname",
+          "full_name",
+          "firstname",
+          "first_name",
+          "contact",
+          "contactperson",
+          "contact_person",
+          "primarycontact",
+          "primary_contact",
+        ]);
+        const businessNameValue = pickField(row, [
+          "business",
+          "businessname",
+          "business_name",
+          "company",
+          "companyname",
+          "organization",
+          "account",
+        ]);
         if (!phoneValue) return null;
         return {
           name: nameValue || "Unknown",
+          business_name: businessNameValue || null,
           phone: phoneValue,
           user_id: userId,
         };
       })
-      .filter((row): row is { name: string; phone: string; user_id: string } => row !== null);
+      .filter(
+        (row): row is { name: string; business_name: string | null; phone: string; user_id: string } =>
+          row !== null,
+      );
 
     if (valid.length === 0) {
       setError("No valid rows found. Make sure your CSV has a phone column (e.g., Phone, Phone number, mobile).");
@@ -373,7 +402,7 @@ export default function LeadsPage() {
     setCallingLeadIds((prev) => ({ ...prev, [lead.id]: true }));
     setError("");
     setCallDurationSeconds(0);
-    setActiveLeadCall({ name: lead.name, phone: lead.phone });
+    setActiveLeadCall({ name: lead.name, businessName: lead.business_name, phone: lead.phone });
     try {
       const rotateRes = await fetch("/api/rotate-did", {
         method: "POST",
@@ -631,7 +660,16 @@ export default function LeadsPage() {
             <div className="border-t border-indigo-100 bg-indigo-50/60 px-4 py-2 sm:px-5">
               <p className="text-xs font-medium text-slate-600">
                 {activeLeadCallLabel}{" "}
-                <span className="font-semibold text-slate-900">{activeLeadCall.name}</span> at{" "}
+                {activeLeadCall.businessName ? (
+                  <>
+                    <span className="font-semibold text-slate-900">{activeLeadCall.businessName}</span>{" "}
+                    (<span className="font-semibold text-slate-900">{activeLeadCall.name}</span>) at{" "}
+                  </>
+                ) : (
+                  <>
+                    <span className="font-semibold text-slate-900">{activeLeadCall.name}</span> at{" "}
+                  </>
+                )}
                 <span className="tabular-nums font-semibold text-slate-900">{activeLeadCall.phone}</span>
               </p>
             </div>
