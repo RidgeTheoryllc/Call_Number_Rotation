@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { Call } from "@twilio/voice-sdk";
 import { getAgentCallSid } from "@/lib/twilio-call";
 
@@ -17,14 +17,13 @@ export function CallKeypad({ userId, activeCall, sendClientDigits, disabled }: C
   const [open, setOpen] = useState(false);
   const [feedback, setFeedback] = useState("");
   const [sending, setSending] = useState(false);
+  const queuedDigitsRef = useRef("");
+  const flushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isFlushingRef = useRef(false);
 
-  const sendDigit = useCallback(
-    async (digit: string) => {
-      if (disabled || sending) return;
-
-      const payload = digit === "Pause" ? "w" : digit;
+  const sendDigitsPayload = useCallback(
+    async (payload: string) => {
       setSending(true);
-      setFeedback("");
 
       try {
         const agentCallSid = getAgentCallSid(activeCall);
@@ -47,13 +46,13 @@ export function CallKeypad({ userId, activeCall, sendClientDigits, disabled }: C
           };
 
           if (res.ok && data.success) {
-            setFeedback(digit === "Pause" ? "Pause sent" : `Sent ${digit}`);
+            setFeedback(`Sent ${payload.toUpperCase()}`);
             return;
           }
 
           if (data.fallback === "client" && activeCall) {
             sendClientDigits(payload);
-            setFeedback(digit === "Pause" ? "Pause sent" : `Sent ${digit}`);
+            setFeedback(`Sent ${payload.toUpperCase()}`);
             return;
           }
 
@@ -65,24 +64,68 @@ export function CallKeypad({ userId, activeCall, sendClientDigits, disabled }: C
 
         if (activeCall) {
           sendClientDigits(payload);
-          setFeedback(digit === "Pause" ? "Pause sent" : `Sent ${digit}`);
+          setFeedback(`Sent ${payload.toUpperCase()}`);
         } else {
           setFeedback("No active call");
         }
       } catch {
         if (activeCall) {
           sendClientDigits(payload);
-          setFeedback(digit === "Pause" ? "Pause sent" : `Sent ${digit}`);
+          setFeedback(`Sent ${payload.toUpperCase()}`);
         } else {
           setFeedback("Could not send tone");
         }
       } finally {
         setSending(false);
-        window.setTimeout(() => setFeedback(""), 2000);
+        setTimeout(() => setFeedback(""), 2000);
       }
     },
-    [activeCall, disabled, sendClientDigits, sending, userId],
+    [activeCall, sendClientDigits, userId],
   );
+
+  const flushQueuedDigits = useCallback(async () => {
+    if (isFlushingRef.current || !queuedDigitsRef.current) return;
+    isFlushingRef.current = true;
+    const payload = queuedDigitsRef.current;
+    queuedDigitsRef.current = "";
+
+    try {
+      await sendDigitsPayload(payload);
+    } finally {
+      isFlushingRef.current = false;
+      if (queuedDigitsRef.current) {
+        flushTimerRef.current = setTimeout(() => {
+          void flushQueuedDigits();
+        }, 0);
+      }
+    }
+  }, [sendDigitsPayload]);
+
+  const sendDigit = useCallback(
+    (digit: string) => {
+      if (disabled) return;
+
+      const payload = digit === "Pause" ? "w" : digit;
+      queuedDigitsRef.current += payload;
+      setFeedback(`Queued ${queuedDigitsRef.current.toUpperCase()}`);
+
+      if (flushTimerRef.current) {
+        clearTimeout(flushTimerRef.current);
+      }
+      flushTimerRef.current = setTimeout(() => {
+        void flushQueuedDigits();
+      }, 200);
+    },
+    [disabled, flushQueuedDigits],
+  );
+
+  useEffect(() => {
+    return () => {
+      if (flushTimerRef.current) {
+        clearTimeout(flushTimerRef.current);
+      }
+    };
+  }, []);
 
   return (
     <div className="w-full">
@@ -111,7 +154,7 @@ export function CallKeypad({ userId, activeCall, sendClientDigits, disabled }: C
               <button
                 key={key}
                 type="button"
-                disabled={disabled || sending}
+                disabled={disabled}
                 onClick={() => void sendDigit(key)}
                 className="flex h-9 items-center justify-center rounded-md bg-white text-sm font-semibold text-slate-800 ring-1 ring-slate-200 transition hover:bg-indigo-50 hover:text-indigo-800 disabled:cursor-not-allowed disabled:opacity-50"
               >
@@ -121,11 +164,11 @@ export function CallKeypad({ userId, activeCall, sendClientDigits, disabled }: C
           </div>
           <button
             type="button"
-            disabled={disabled || sending}
+            disabled={disabled}
             onClick={() => void sendDigit("Pause")}
             className="mt-1.5 w-full rounded-md bg-white py-1.5 text-xs font-semibold text-slate-600 ring-1 ring-slate-200 transition hover:bg-indigo-50 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            Pause (½s)
+            {sending ? "Sending..." : "Pause (1/2s)"}
           </button>
           {feedback ? (
             <p className="mt-1.5 text-center text-[10px] font-medium text-indigo-600">{feedback}</p>
