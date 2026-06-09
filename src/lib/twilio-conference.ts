@@ -420,6 +420,19 @@ export async function disconnectAgentWhenLeadLeaves(
     return;
   }
 
+  // A DTMF redirect briefly removes the lead leg from the conference while the call stays live.
+  await new Promise((resolve) => setTimeout(resolve, 1200));
+  const client = getTwilioClient();
+  try {
+    const leftCall = await client.calls(leftCallSid).fetch();
+    const status = (leftCall.status ?? "").toLowerCase();
+    if (["queued", "ringing", "in-progress"].includes(status)) {
+      return;
+    }
+  } catch {
+    // If Twilio no longer has the leg, treat it as ended and release the agent.
+  }
+
   await hangupCallBySid(agentSid);
   await endConferenceSession(conferenceName);
 }
@@ -469,33 +482,38 @@ export async function sendDigitsToLeadLeg(input: {
     return { ok: false, fallback: "client", message: "Lead line is not ready yet. Try again in a moment." };
   }
 
-  await sendDigitsOnCallLeg(leadSid, digits);
+  await sendDigitsOnCallLeg({
+    callSid: leadSid,
+    digits,
+    conferenceName: String(session.conference_name),
+    callerId: String(session.caller_id ?? ""),
+  });
   return { ok: true, mode: "conference_lead" };
 }
 
-/** Twilio REST SendDigits on an in-progress call (Node SDK types omit this on update). */
-async function sendDigitsOnCallLeg(callSid: string, digits: string): Promise<void> {
-  const accountSid = process.env.TWILIO_ACCOUNT_SID;
-  const authToken = process.env.TWILIO_AUTH_TOKEN;
-  if (!accountSid || !authToken) {
-    throw new Error("Missing TWILIO_ACCOUNT_SID or TWILIO_AUTH_TOKEN");
-  }
-
-  const url = `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Calls/${encodeURIComponent(callSid)}.json`;
-  const credentials = Buffer.from(`${accountSid}:${authToken}`).toString("base64");
-  const res = await fetch(url, {
-    method: "POST",
-    headers: {
-      Authorization: `Basic ${credentials}`,
-      "Content-Type": "application/x-www-form-urlencoded",
+/** Redirects a live lead leg to play DTMF, then rejoins it to the active conference. */
+async function sendDigitsOnCallLeg(input: {
+  callSid: string;
+  digits: string;
+  conferenceName: string;
+  callerId: string;
+}): Promise<void> {
+  const client = getTwilioClient();
+  const response = new twilio.twiml.VoiceResponse();
+  response.play({ digits: input.digits });
+  const dial = response.dial(input.callerId ? { callerId: input.callerId } : {});
+  dial.conference(
+    {
+      startConferenceOnEnter: false,
+      endConferenceOnExit: false,
+      beep: "false",
     },
-    body: new URLSearchParams({ SendDigits: digits }),
-  });
+    input.conferenceName,
+  );
 
-  if (!res.ok) {
-    const detail = await res.text();
-    throw new Error(detail || `Twilio SendDigits failed (${res.status})`);
-  }
+  await client.calls(input.callSid).update({
+    twiml: response.toString(),
+  });
 }
 
 export function buildJoinConferenceTwiml(options: {
